@@ -61,7 +61,7 @@ export function loadConfig(
         env.WEBHOOK_MAX_MESSAGE_AGE_SECONDS,
         DAY_MS / 1000,
       ),
-      graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION?.trim() || "v23.0",
+      graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION?.trim() || "v26.0",
       dryRun: accessToken === "" || phoneNumberId === "",
     },
   };
