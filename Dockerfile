@@ -51,9 +51,11 @@ COPY scripts/db.ts scripts/create-admin.ts ./scripts/
 # is not served in production.
 COPY --from=build /app/dist/admin ./dist/admin
 
+# Mount a volume at /data (docker run -v …:/data, or a Railway volume). There is
+# no VOLUME instruction: Railway refuses it and mounts its own volumes. On
+# Railway set RAILWAY_RUN_UID=0, as its volumes are mounted owned by root.
 RUN mkdir -p /data && chown -R bun:bun /data
 USER bun
-VOLUME ["/data"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
