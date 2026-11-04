@@ -17,7 +17,7 @@ export async function testApp(
     WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
     ...overrides,
   });
-  const app = await createApp(config, { quiet: true });
+  const app = await createApp(config, { quiet: true, uiSource: false });
   return { app, config };
 }
 
