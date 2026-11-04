@@ -185,25 +185,26 @@ its way to your bank account"). Each transaction gets a reference and a row in
 
 Everything is read from the environment (Bun loads `.env` automatically). See `.env.example`.
 
-| Variable                                          | Default                                       | Meaning                                                                                        |
-| ------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `PORT`                                            | `3000`                                        | HTTP port                                                                                      |
-| `HOST`                                            | `0.0.0.0`                                     | Bind address                                                                                   |
-| `NODE_ENV`                                        |                                               | `production` turns on the production checks below                                              |
-| `TRUSTED_PROXIES`                                 | `0`                                           | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer |
-| `DATA_DIR`                                        | `./data`                                      | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)         |
-| `SESSION_TTL_MS`                                  | `86400000` (24 h)                             | Idle time before a conversation resets                                                         |
-| `MIGRATE_ON_START`                                | on outside production; on in the Docker image | Apply pending migrations at startup. Off: a pending migration refuses the start                |
-| `ENABLE_DEV_ROUTES`                               | on outside production                         | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production         |
-| `WHATSAPP_VERIFY_TOKEN`                           |                                               | The token Meta echoes when you register the webhook                                            |
-| `WHATSAPP_APP_SECRET`                             |                                               | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)     |
-| `WHATSAPP_ACCESS_TOKEN`                           |                                               | Graph API token. Unset: dry-run                                                                |
-| `WHATSAPP_PHONE_NUMBER_ID`                        |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run        |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                                               | Deliveries for any other business account are ignored. Unset: any                              |
-| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`                                       | Older messages are dropped as stale or replayed                                                |
-| `WHATSAPP_GRAPH_API_VERSION`                      | `v26.0`                                       | Graph API version replies are sent with (`v26.0` is the newest as of November 2026)            |
-| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                                               | When all three are set, this admin is created at startup (or has its password reset)           |
-| `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)                              | How long an admin stays signed in                                                              |
+| Variable                                          | Default                                       | Meaning                                                                                                                                                             |
+| ------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                                            | `3000`                                        | HTTP port                                                                                                                                                           |
+| `HOST`                                            | `0.0.0.0`                                     | Bind address                                                                                                                                                        |
+| `NODE_ENV`                                        |                                               | `production` turns on the production checks below                                                                                                                   |
+| `TRUSTED_PROXIES`                                 | `0`                                           | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer                                                                      |
+| `CLIENT_IP_HEADER`                                |                                               | A header holding the client's address, set by a proxy that overwrites it on every request: `x-real-ip` on Railway. Wins over `TRUSTED_PROXIES` when it holds one IP |
+| `DATA_DIR`                                        | `./data`                                      | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)                                                                              |
+| `SESSION_TTL_MS`                                  | `86400000` (24 h)                             | Idle time before a conversation resets                                                                                                                              |
+| `MIGRATE_ON_START`                                | on outside production; on in the Docker image | Apply pending migrations at startup. Off: a pending migration refuses the start                                                                                     |
+| `ENABLE_DEV_ROUTES`                               | on outside production                         | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production                                                                              |
+| `WHATSAPP_VERIFY_TOKEN`                           |                                               | The token Meta echoes when you register the webhook                                                                                                                 |
+| `WHATSAPP_APP_SECRET`                             |                                               | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)                                                                          |
+| `WHATSAPP_ACCESS_TOKEN`                           |                                               | Graph API token. Unset: dry-run                                                                                                                                     |
+| `WHATSAPP_PHONE_NUMBER_ID`                        |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run                                                                             |
+| `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                                               | Deliveries for any other business account are ignored. Unset: any                                                                                                   |
+| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`                                       | Older messages are dropped as stale or replayed                                                                                                                     |
+| `WHATSAPP_GRAPH_API_VERSION`                      | `v26.0`                                       | Graph API version replies are sent with (`v26.0` is the newest as of November 2026)                                                                                 |
+| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                                               | When all three are set, this admin is created at startup (or has its password reset)                                                                                |
+| `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)                              | How long an admin stays signed in                                                                                                                                   |
 
 **In production** (`NODE_ENV=production`) the service refuses to start without
 `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and
@@ -364,9 +365,12 @@ dashboard are mounted below Nest's guards, so they get the same limits as middle
 
 **Also:**
 
-- Client IPs come from the socket peer unless `TRUSTED_PROXIES` is set.
-  bun-nest always parses `X-Forwarded-For`, so this is what stops clients
-  choosing their own IP.
+- Client IPs come from `CLIENT_IP_HEADER` when it is set and holds one address, otherwise from the
+  socket peer, or `TRUSTED_PROXIES` hops into `X-Forwarded-For`. bun-nest always parses
+  `X-Forwarded-For`, so these settings are what stop clients choosing their own IP. On Railway, set
+  `CLIENT_IP_HEADER=x-real-ip`: its edge overwrites that header with the connecting client on every
+  request, while `X-Forwarded-For` carries a varying number of CDN hops (counting them gave CDN
+  addresses for every caller). Set it only behind such a proxy.
 - Request bodies are capped at 1 MB.
 - The admin page sends `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`
   and `Cache-Control: no-store`, and bun-jobs-ui sets its own strict CSP. The jobs
@@ -506,7 +510,7 @@ docker run -d --name investnow -p 3000:3000 \
   migrate by hand: `docker exec investnow bun scripts/db.ts status` (or `migrate`). Create an
   admin with `docker exec -it investnow bun scripts/create-admin.ts --email … --username …`.
 - Put it behind HTTPS, since Meta requires it and the admin cookie is `Secure`. Set
-  `TRUSTED_PROXIES=1` behind one reverse proxy.
+  `TRUSTED_PROXIES=1` behind one reverse proxy (on Railway, `CLIENT_IP_HEADER=x-real-ip` instead).
 
 ---
 

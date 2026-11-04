@@ -50,7 +50,7 @@ class SecurityStoreModule {}
         throttlers: [{ name: "default", ttl: 60_000, limit: 120 }],
         storage,
         getTracker: (req: Record<string, unknown>) =>
-          clientIp(req as unknown as BunRequest, config.trustedProxies),
+          clientIp(req as unknown as BunRequest, config),
       }),
     }),
   ],

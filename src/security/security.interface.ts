@@ -1,3 +1,4 @@
+import type { AppConfig } from "../config.interface";
 export type ThrottleSchema = {
   [key: `hits:${string}`]: number;
   [key: `window:${string}`]: number;
@@ -11,3 +12,9 @@ export interface ThrottlerStorageRecord {
   isBlocked: boolean;
   timeToBlockExpire: number;
 }
+
+/** The settings that decide where a client's address is read from. */
+export type ClientIpConfig = Pick<
+  AppConfig,
+  "trustedProxies" | "clientIpHeader"
+>;

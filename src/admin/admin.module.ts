@@ -112,7 +112,7 @@ class AdminPageController {
             name: "jobs-api",
             limit: 300,
             ttl: 60_000,
-            tracker: (req) => clientIp(req, config.trustedProxies),
+            tracker: (req) => clientIp(req, config),
           }),
         ],
         authorize: async (req: BunRequest) =>
@@ -155,7 +155,7 @@ export class AdminModule implements OnModuleInit, OnApplicationBootstrap {
           name: "jobs-ui",
           limit: 120,
           ttl: 60_000,
-          tracker: (req) => clientIp(req, this.config.trustedProxies),
+          tracker: (req) => clientIp(req, this.config),
         }),
         this.redirectToSignIn,
       ],
