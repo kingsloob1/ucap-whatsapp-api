@@ -47,6 +47,16 @@ export type PendingAction =
   | { type: "buy"; productCode: string; amountKobo: number }
   | { type: "balance" };
 
+/** Everything onboarding collects, held while the user reviews it before the account is created. */
+export interface OnboardingDraft {
+  bvn: string;
+  /** ISO date (YYYY-MM-DD). */
+  dateOfBirth: string;
+  productCodes: string[];
+  /** The PIN's argon2id hash: the PIN itself is never stored. */
+  pinHash: string;
+}
+
 /**
  * The conversation state machine's states. A session is stored per WhatsApp id
  * in the bun-cache SQLite store, expires after the configured idle TTL, and
@@ -71,6 +81,14 @@ export type Session =
       productCodes: string[];
       pinHash: string;
     }
+  // Onboarding review: every answer is shown, and any one of them can be changed
+  // before the account is created. Each edit step returns to the review.
+  | { step: "review"; draft: OnboardingDraft }
+  | { step: "edit_bvn"; draft: OnboardingDraft }
+  | { step: "edit_dob"; draft: OnboardingDraft }
+  | { step: "edit_products"; draft: OnboardingDraft }
+  | { step: "edit_pin"; draft: OnboardingDraft }
+  | { step: "edit_pin_confirm"; draft: OnboardingDraft; newPinHash: string }
   // Onboarded
   | { step: "menu" }
   | { step: "fund_amount" }
