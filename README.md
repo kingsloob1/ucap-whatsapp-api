@@ -74,14 +74,20 @@ ADMIN_PASSWORD=Choose-A-Strong-One-1' >> .env
 bun run dev:all
 ```
 
-`dev:all` starts three processes in one terminal:
+`dev:all` starts two processes in one terminal:
 
-| Process        | Command                                                                | URL                            |
-| -------------- | ---------------------------------------------------------------------- | ------------------------------ |
-| API            | `bun --watch src/main.ts` (restarts on every change)                   | <http://127.0.0.1:3000>        |
-| Chat simulator | `bun --hot ui/server.ts` (hot reload)                                  | <http://127.0.0.1:3001/>       |
-| Admin UI       | the same UI dev server                                                 | <http://127.0.0.1:3001/admin/> |
-| Type sync      | `bun-client watch` (rewrites `ui/src/api.gen.ts` when the API changes) |                                |
+| Process   | Command                   | What it does                                                                                                                                 |
+| --------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| API       | `bun --watch src/main.ts` | The service on <http://127.0.0.1:3000>, restarted on every server change. In development it also serves the UIs from source, with hot reload |
+| Type sync | `bun-client watch`        | Rewrites `ui/src/api.gen.ts` whenever the API's routes or schemas change                                                                     |
+
+Then open:
+
+|                | URL                                                |
+| -------------- | -------------------------------------------------- |
+| Chat simulator | <http://127.0.0.1:3000/chat> (`/` redirects there) |
+| Admin          | <http://127.0.0.1:3000/admin/>                     |
+| Jobs dashboard | <http://127.0.0.1:3000/admin/jobs/>                |
 
 Open the chat simulator, enter any valid mobile number (e.g. `0803 123 4567`
 with Nigeria selected) and say **hi**.
@@ -207,25 +213,25 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 
 ## HTTP endpoints
 
-| Method and path                        | Auth                       | Throttle                | What                                                                                       |
-| -------------------------------------- | -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
-| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                      |
-| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                            |
-| `GET /health`                          |                            | 120/min                 | Status and the server's date and time ([example](#endpoint-examples))                      |
-| `GET /admin`                           |                            |                         | The admin UI                                                                               |
-| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                       |
-| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                            |
-| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                        |
-| `GET /admin/api/sessions`              | cookie                     | 120/min                 | Conversations, filtered by `source`, `status` and `search`, paged by `page` and `pageSize` |
-| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                        |
-| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                                      |
-| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                           |
-| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                                      |
-| `POST /dev/simulate`                   | dev only                   | 60/min                  | Send one message as a WhatsApp user ([example](#endpoint-examples))                        |
-| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test user and their session                                                      |
-| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                      |
-| `GET /chat/`                           | dev only                   |                         | The built chat simulator                                                                   |
-| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                      |
+| Method and path                        | Auth                       | Throttle                | What                                                                                                             |
+| -------------------------------------- | -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                                            |
+| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                                                  |
+| `GET /health`                          |                            | 120/min                 | Status and the server's date and time ([example](#endpoint-examples))                                            |
+| `GET /admin`                           |                            |                         | The admin UI (from source with hot reload in development, otherwise the built one)                               |
+| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                                             |
+| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                                                  |
+| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                                              |
+| `GET /admin/api/sessions`              | cookie                     | 120/min                 | Conversations, filtered by `source`, `status` and `search`, paged by `page` and `pageSize`                       |
+| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                                              |
+| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                                                            |
+| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                                                 |
+| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                                                            |
+| `POST /dev/simulate`                   | dev only                   | 60/min                  | Send one message as a WhatsApp user ([example](#endpoint-examples))                                              |
+| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test user and their session                                                                            |
+| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                                            |
+| `GET /chat`                            | dev only                   |                         | The chat simulator (from source with hot reload in development, otherwise the built one); `GET /` redirects here |
+| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                                            |
 
 Validation errors answer `400` with `{ statusCode, message: string[], error }`.
 
@@ -282,7 +288,7 @@ Product multi-select is a numbered text reply, since WhatsApp lists are single-s
 
 ## Admin area
 
-`/admin` (the built UI, served by the API) or `/admin/` on the UI dev server.
+`/admin` on the API: served from source with hot reload in development, otherwise the built UI.
 
 - **Accounts.** Set `ADMIN_EMAIL`, `ADMIN_USERNAME` and `ADMIN_PASSWORD` (created
   or reset at startup), or run:
@@ -311,7 +317,7 @@ Product multi-select is a numbered text reply, since WhatsApp lists are single-s
 
 ## Chat simulator and the live typed client
 
-The simulator at <http://127.0.0.1:3001/> asks for a country and a mobile
+The simulator at <http://127.0.0.1:3000/chat> asks for a country and a mobile
 number. The `phone` package validates it as a real mobile number, both in the
 browser and again on the server. You then chat as that number: WhatsApp-style
 bubbles, reply buttons, list menus as a bottom sheet, and WhatsApp's
@@ -439,8 +445,7 @@ manage their own schemas and are not part of the model.
 | Command                                | What it does                                                |
 | -------------------------------------- | ----------------------------------------------------------- |
 | `bun run dev:all`                      | API + UIs + type sync, in one terminal                      |
-| `bun run dev`                          | The API alone (`bun --watch`)                               |
-| `bun run ui:dev`                       | The UI dev server alone (`UI_PORT`, `API_URL`)              |
+| `bun run dev`                          | The API alone (`bun --watch`), serving the UIs from source  |
 | `bun run ui:types`                     | The type sync alone                                         |
 | `bun run ui:types:generate`            | Regenerate `ui/src/api.gen.ts` without a server             |
 | `bun run ui:build`                     | Production builds of both UIs into `dist/`                  |
@@ -451,9 +456,15 @@ manage their own schemas and are not part of the model.
 | `bun run db:migrate`                   | Apply pending migrations                                    |
 | `bun run db:check`                     | Fail if the model has changes no migration covers           |
 
-The UI dev server bundles `ui/index.html` and `ui/admin.html` (TSX and nested
-CSS, no other build tooling) and proxies every other path to the API, WebSockets
-included, so the UIs always call the API same-origin.
+**The UIs in development.** There is no separate UI server. When the API runs
+in development (`ENABLE_DEV_ROUTES` on, `NODE_ENV` not `production`), it serves
+`ui/index.html` at `/chat` and `ui/admin.html` at `/admin` as native `Bun.serve`
+routes, ahead of Nest. Bun bundles the TSX and nested CSS on request, with no
+other build tooling, and pushes changes to the open page (hot module
+replacement), so editing a UI file doesn't restart the API. The UIs and the API
+share one origin, so the admin cookie, the jobs dashboard's WebSocket and the
+typed client need no proxy or CORS. In production (and in the tests) the built
+`dist/` is served instead (`bun run ui:build`), and the UI source is never loaded.
 
 Run everything from the project root: Bun reads `emitDecoratorMetadata`, which
 Nest's dependency injection needs, from the working directory's `tsconfig.json`.
@@ -517,7 +528,6 @@ ui/
   index.html, src/       the chat simulator
   admin.html, src/admin/ the admin UI
   src/api.gen.ts         generated typed client (do not edit)
-  server.ts              the UI dev server (HMR + API/WebSocket proxy)
 migrations/              timestamped SQL migrations generated from the model (+ drizzle-kit's meta/)
 scripts/                 dev runner, migrations (db.ts), admin creation, OpenAPI export
 test/                    bun tests
@@ -553,7 +563,7 @@ drizzle.config.ts        drizzle-kit settings (model, output folder, timestamp p
 | Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines |
 | Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`  |
 | `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                           |
-| `/admin` answers 503                                           | The admin UI isn't built: `bun run ui:build`, or use the UI dev server                            |
+| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                  |
 | `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                            |
 | Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                          |
 | `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration      |

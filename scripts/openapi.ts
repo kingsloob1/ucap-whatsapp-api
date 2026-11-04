@@ -16,7 +16,7 @@ export default async function openapi() {
     DATA_DIR: ":memory:",
     ENABLE_DEV_ROUTES: "true",
   });
-  const app = await createApp(config, { quiet: true });
+  const app = await createApp(config, { quiet: true, uiSource: false });
   await app.init();
   try {
     const adapter = app.getHttpAdapter() as unknown as BunHttpAdapter;

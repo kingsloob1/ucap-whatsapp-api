@@ -73,7 +73,7 @@ class AdminPageController {
         .status(503)
         .type("text/plain")
         .send(
-          "The admin UI isn't built yet: run `bun run ui:build`, or use the UI dev server (`bun run ui:dev`).",
+          "The admin UI isn't built yet: run `bun run ui:build`, or run the API in development (`bun run dev`), which serves it from source.",
         );
       return;
     }

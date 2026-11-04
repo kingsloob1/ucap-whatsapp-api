@@ -8,7 +8,6 @@
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
     "dev:all": "bun scripts/dev.ts",
-    "ui:dev": "bun --hot ui/server.ts",
     "ui:build": "rm -rf dist/ui dist/admin && bun build ui/index.html --outdir dist/ui --production && bun build ui/admin.html --outdir dist/admin --production --public-path /admin/static/",
     "ui:types": "bun-client watch --out ui/src/api.gen.ts",
     "ui:types:generate": "bun-client generate --module scripts/openapi.ts --out ui/src/api.gen.ts",
