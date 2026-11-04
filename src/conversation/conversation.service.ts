@@ -20,7 +20,13 @@ import {
   parseSelection,
 } from "./parsers";
 import { PRODUCTS, productByCode, productTitle } from "./products";
-import { SESSION_CACHE, sessionKey } from "./conversation.constants";
+import {
+  BVN_USSD,
+  INVESTNOW_USSD,
+  SESSION_CACHE,
+  sessionKey,
+  ussd,
+} from "./conversation.constants";
 import type { User } from "../database/users.interface";
 import type {
   InboundInput,
@@ -211,7 +217,8 @@ export class ConversationService {
         buttons(
           `Welcome to *InvestNow*, ${name}! 👋\n\n` +
             "Invest in money market funds, stocks, trusts and more, right here on WhatsApp.\n\n" +
-            "You don't have an InvestNow account yet. Would you like to set one up now? It takes about 2 minutes.",
+            "You don't have an InvestNow account yet. Would you like to set one up now? It takes about 2 minutes.\n\n" +
+            `You can also use InvestNow by USSD: dial ${ussd(INVESTNOW_USSD)}.`,
           [
             { id: CHOICE.proceed, title: "Proceed" },
             { id: CHOICE.close, title: "Close" },
@@ -226,7 +233,8 @@ export class ConversationService {
       next: null,
       replies: [
         text(
-          "Your session has been closed. Send any message whenever you'd like to continue. 👋",
+          "Your session has been closed. Send any message whenever you'd like to continue, " +
+            `or dial ${ussd(INVESTNOW_USSD)} to use InvestNow by USSD. 👋`,
         ),
       ],
     };
@@ -244,8 +252,7 @@ export class ConversationService {
         replies: [
           text(
             "Great, let's get you set up! 🚀\n\n*Step 1 of 4*\nPlease enter your 11-digit Bank Verification Number (BVN).\n\n" +
-              // Monospace keeps WhatsApp from pairing the USSD code's asterisk with another as bold.
-              "Don't know it? Dial ```*7277#``` from the phone number linked to your bank account.",
+              `Don't know it? Dial ${ussd(BVN_USSD)} from the phone number linked to your bank account.`,
           ),
         ],
       };

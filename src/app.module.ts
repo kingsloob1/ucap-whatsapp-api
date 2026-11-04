@@ -13,6 +13,7 @@ import { DatabaseModule } from "./database/database.module";
 import { DevController } from "./dev/dev.controller";
 import { adapterRef, UI_ASYNCAPI, uiDocument } from "./dev/ui-document";
 import { HealthResponseDto } from "./dev/dev.dto";
+import type { HealthResponse } from "./dev/dev.interface";
 import { JOBS_PROVIDER, QueueService } from "./queue/queue.service";
 import { SecurityModule } from "./security/security.module";
 import {
@@ -27,8 +28,13 @@ class HealthController {
   @Get("health")
   @Validate({ responses: { 200: HealthResponseDto } })
   @Describe({ operationId: "health" })
-  health(): { status: "ok" } {
-    return { status: "ok" };
+  health(): HealthResponse {
+    const now = new Date();
+    return {
+      status: "ok",
+      serverTime: now.toISOString(),
+      epochMs: now.getTime(),
+    };
   }
 }
 

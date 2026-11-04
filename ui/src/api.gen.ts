@@ -4,7 +4,7 @@
  * `manifest` it takes. Do not edit; regenerate it, and run the same command
  * with `--check` in CI.
  *
- * typesHash: 8786367cc6cb79e5
+ * typesHash: 48d60caa4f857fdc
  */
 import type { RouteManifest } from "@kingsleyweb/bun-client";
 
@@ -12,7 +12,7 @@ import type { RouteManifest } from "@kingsleyweb/bun-client";
  * The documents' hash, as the header records it: the `buster` of a
  * persisted query cache (`@kingsleyweb/bun-client/persist`).
  */
-export const typesHash = "8786367cc6cb79e5";
+export const typesHash = "48d60caa4f857fdc";
 
 export interface Routes {
   /** Sign in with an email or username and a password */
@@ -372,6 +372,8 @@ export interface Routes {
     responses: {
       200: {
         status: "ok";
+        serverTime: string;
+        epochMs: number;
       };
     };
   };

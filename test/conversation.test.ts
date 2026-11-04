@@ -75,20 +75,22 @@ describe("onboarding", () => {
       buttons: [{ id: "onboard:proceed" }, { id: "close" }],
     });
     expect(r.body).toContain("Welcome to *InvestNow*, Ada!");
+    expect(r.body).toContain("dial ```*7277#```");
   });
 
   test("Close ends the session", async () => {
     const r = await say(waId, tap("close", "Close"));
     expect(r.step).toBeNull();
     expect(r.body).toContain("session has been closed");
+    expect(r.body).toContain("```*7277#```");
   });
 
   test("BVN, date of birth, products and PIN, with the errors in between", async () => {
     await say(waId, "hi");
     const prompt = await say(waId, tap("onboard:proceed"));
     expect(prompt.step).toBe("ask_bvn");
-    // Monospace: the USSD code's asterisk must never pair up as WhatsApp bold.
-    expect(prompt.body).toContain("```*7277#```");
+    // Monospace: the USSD code's asterisks must never render as WhatsApp bold.
+    expect(prompt.body).toContain("```*565*0#```");
 
     let r = await say(waId, "12345");
     expect(r.step).toBe("ask_bvn");
