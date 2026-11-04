@@ -495,8 +495,10 @@ docker run -d --name investnow -p 3000:3000 \
 
 - The build has three stages: bundle the UIs, install production dependencies
   only, then a slim runtime on `oven/bun:1.4.4-slim` running as the `bun` user.
-- It runs in production mode. The admin UI is built in and served at `/admin`;
-  the simulator, `/chat` and the type sync are left out.
+- It runs in production mode. Both UIs are built in: the admin UI is served at `/admin`; the chat
+  simulator at `/chat` (and `/` redirects there) only when `ENABLE_DEV_ROUTES=true`, as in a
+  development environment, together with the `/dev` API it calls. In production neither is
+  routed, and the type sync is never on.
 - State lives in the `/data` volume; back it up. Run **one** container per volume:
   SQLite and the per-user ordering are single-host.
 - It has a healthcheck on `GET /health`.

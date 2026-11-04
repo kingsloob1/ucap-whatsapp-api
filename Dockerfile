@@ -47,9 +47,11 @@ COPY src ./src
 COPY migrations ./migrations
 # Run inside the container: bun scripts/db.ts status|migrate, bun scripts/create-admin.ts
 COPY scripts/db.ts scripts/create-admin.ts ./scripts/
-# The built admin UI (served at /admin). The chat simulator is a dev tool and
-# is not served in production.
+# The built UIs: admin (served at /admin) and the chat simulator (served at
+# /chat only when ENABLE_DEV_ROUTES is on, e.g. a development environment;
+# in production it is never routed).
 COPY --from=build /app/dist/admin ./dist/admin
+COPY --from=build /app/dist/ui ./dist/ui
 
 # Mount a volume at /data (docker run -v …:/data, or a Railway volume). There is
 # no VOLUME instruction: Railway refuses it and mounts its own volumes. On
