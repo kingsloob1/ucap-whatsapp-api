@@ -12,6 +12,11 @@ export interface AppConfig {
   enableDevRoutes: boolean;
   /** Reverse proxies in front of the service whose X-Forwarded-For is trusted (0: use the socket peer). */
   trustedProxies: number;
+  /**
+   * A header that holds the client's address, set by a proxy that overwrites it
+   * on every request (`x-real-ip` on Railway). Lower-cased; empty: not used.
+   */
+  clientIpHeader: string;
   admin: {
     /** How long an admin stays signed in, in ms. */
     sessionTtlMs: number;

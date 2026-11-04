@@ -38,6 +38,7 @@ export function loadConfig(
     migrateOnStart: bool(env.MIGRATE_ON_START, !production),
     enableDevRoutes: bool(env.ENABLE_DEV_ROUTES, !production),
     trustedProxies: int(env.TRUSTED_PROXIES, 0),
+    clientIpHeader: env.CLIENT_IP_HEADER?.trim().toLowerCase() ?? "",
     admin: {
       sessionTtlMs: int(env.ADMIN_SESSION_TTL_MS, 8 * 3_600_000),
       seed:

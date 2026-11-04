@@ -54,7 +54,7 @@ export class WebhookSignatureGuard implements CanActivate {
       return true;
     }
     const req = context.switchToHttp().getRequest<RawBodyRequest<BunRequest>>();
-    const ip = clientIp(req, this.config.trustedProxies);
+    const ip = clientIp(req, this.config);
     if (await this.origin.isBlocked(ip))
       throw new ForbiddenException("Blocked");
 
@@ -96,7 +96,7 @@ export class WebhookController {
     @Req() req: BunRequest,
     @Res({ passthrough: true }) res: BunResponse,
   ): Promise<string> {
-    const ip = clientIp(req, this.config.trustedProxies);
+    const ip = clientIp(req, this.config);
     if (await this.origin.isBlocked(ip))
       throw new ForbiddenException("Blocked");
     const expected = this.config.whatsapp.verifyToken;

@@ -123,7 +123,7 @@ export class AdminController {
     const { token, session } = await this.auth.login(
       body.identifier,
       body.password,
-      clientIp(req, this.config.trustedProxies),
+      clientIp(req, this.config),
     );
     this.auth.setCookie(res, token);
     return toMe(session);
