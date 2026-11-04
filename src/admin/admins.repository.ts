@@ -35,9 +35,9 @@ export class AdminsRepository {
     const value = identifier.trim();
     const rows: AdminRow[] = value.includes("@")
       ? await this
-          .sql`SELECT id, email, username, password_hash FROM admins WHERE email = ${value}`
+          .sql`SELECT id, email, username, password_hash FROM admins WHERE email = ${value.toLowerCase()}`
       : await this
-          .sql`SELECT id, email, username, password_hash FROM admins WHERE username = ${value}`;
+          .sql`SELECT id, email, username, password_hash FROM admins WHERE lower(username) = lower(${value})`;
     const row = rows[0];
     return row
       ? {

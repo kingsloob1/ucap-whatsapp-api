@@ -12,5 +12,9 @@ NestJS on Bun with the `@kingsleyweb/*` packages. See README.md for the architec
 - **Typed client:** `ui/src/api.gen.ts` is generated. Never edit it by hand: run `bun run ui:types:generate`
   (or keep `bun run ui:types` running), and commit it. CI's `ui:types:check` fails when it is stale.
 - **Run from the project root:** Bun reads `emitDecoratorMetadata` from the working directory's tsconfig.json.
+- **Database schema:** model-driven. Edit `src/database/schema.ts`, run `bun run db:generate -- --name <what>`,
+  commit the migration it writes. Never edit an applied migration (it shows as `modified`); `bun run db:check`
+  fails on model changes with no migration.
 - **Webhook:** never throttle `/webhook`; it is protected by signature and origin checks (WebhookOriginService).
-- **Git:** default branch `develop`; every change goes branch → commit → PR → merge.
+- **Git:** default branch `develop`; every change goes branch → commit → PR → merge, and every commit is
+  signed (`develop` requires verified signatures).

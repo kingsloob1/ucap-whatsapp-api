@@ -16,7 +16,10 @@ import { UsersRepository } from "./users.repository";
     {
       provide: APP_DB,
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => openAppDatabase(config.dataDir),
+      useFactory: (config: AppConfig) =>
+        openAppDatabase(config.dataDir, {
+          migrateOnStart: config.migrateOnStart,
+        }),
     },
     UsersRepository,
     SessionsRepository,

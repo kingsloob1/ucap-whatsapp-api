@@ -7,6 +7,8 @@ export interface AppConfig {
   dataDir: string;
   /** Idle time before an unfinished conversation resets, in ms. */
   sessionTtlMs: number;
+  /** Apply pending database migrations at startup; without it, a pending migration refuses the start. */
+  migrateOnStart: boolean;
   enableDevRoutes: boolean;
   /** Reverse proxies in front of the service whose X-Forwarded-For is trusted (0: use the socket peer). */
   trustedProxies: number;
