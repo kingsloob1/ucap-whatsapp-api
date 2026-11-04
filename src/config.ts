@@ -35,6 +35,7 @@ export function loadConfig(
     production,
     dataDir: dataDir === ":memory:" ? dataDir : resolve(dataDir),
     sessionTtlMs: int(env.SESSION_TTL_MS, DAY_MS),
+    migrateOnStart: bool(env.MIGRATE_ON_START, !production),
     enableDevRoutes: bool(env.ENABLE_DEV_ROUTES, !production),
     trustedProxies: int(env.TRUSTED_PROXIES, 0),
     admin: {

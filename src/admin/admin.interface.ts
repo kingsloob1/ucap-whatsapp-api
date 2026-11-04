@@ -1,3 +1,4 @@
+import type { admins } from "../database/schema";
 import type { BunRequest } from "@kingsleyweb/bun-common";
 import type { z } from "zod";
 import type {
@@ -24,12 +25,10 @@ export type AdminCacheSchema = {
   [key: `login-fail:${string}`]: number;
 };
 
-export interface AdminRecord {
-  id: number;
-  email: string;
-  username: string;
-  passwordHash: string;
-}
+export type AdminRecord = Pick<
+  typeof admins.$inferSelect,
+  "id" | "email" | "username" | "passwordHash"
+>;
 
 export interface AdminRow {
   id: number;

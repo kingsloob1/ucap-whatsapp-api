@@ -1,18 +1,12 @@
-export interface User {
-  id: number;
-  waId: string;
-  name: string | null;
-  bvn: string;
-  dateOfBirth: string;
-  pinHash: string;
-  walletBalanceKobo: number;
-  createdAt: string;
-}
+import type { transactions, userProducts, users } from "./schema";
 
-export interface Holding {
-  productCode: string;
-  balanceKobo: number;
-}
+/** A user, as the model (schema.ts) defines the `users` table. */
+export type User = Omit<typeof users.$inferSelect, "updatedAt">;
+
+export type Holding = Pick<
+  typeof userProducts.$inferSelect,
+  "productCode" | "balanceKobo"
+>;
 
 export interface NewUser {
   waId: string;
@@ -24,7 +18,7 @@ export interface NewUser {
   productCodes: string[];
 }
 
-export type TransactionType = "fund" | "withdraw" | "buy";
+export type TransactionType = (typeof transactions.$inferSelect)["type"];
 
 export interface UserRow {
   id: number;

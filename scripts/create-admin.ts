@@ -43,7 +43,9 @@ if (problem) {
 }
 
 const config = loadConfig();
-const sql = await openAppDatabase(config.dataDir);
+const sql = await openAppDatabase(config.dataDir, {
+  migrateOnStart: config.migrateOnStart,
+});
 try {
   const admin = await new AdminsRepository(sql).upsert({
     email,

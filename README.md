@@ -52,6 +52,7 @@ It ships with:
 | [`@kingsleyweb/bun-jobs-ui`](https://www.npmjs.com/package/@kingsleyweb/bun-jobs-ui) | The queues dashboard at `/admin/jobs`                                                                                                           |
 | [`@kingsleyweb/bun-client`](https://www.npmjs.com/package/@kingsleyweb/bun-client)   | The UIs' typed HTTP client, regenerated from the API as it changes                                                                              |
 | `Bun.SQL` (SQLite)                                                                   | Users, products, transactions, admins, the session log                                                                                          |
+| Drizzle (`drizzle-orm`, `drizzle-kit`)                                               | The schema model and its timestamped SQL migrations                                                                                             |
 | `@nestjs/throttler`                                                                  | Rate limits (on a bun-cache storage)                                                                                                            |
 | `zod`                                                                                | DTOs: request, response and webhook schemas                                                                                                     |
 | `phone`                                                                              | Mobile-number validation (API and UI)                                                                                                           |
@@ -176,24 +177,25 @@ its way to your bank account"). Each transaction gets a reference and a row in
 
 Everything is read from the environment (Bun loads `.env` automatically). See `.env.example`.
 
-| Variable                                          | Default               | Meaning                                                                                        |
-| ------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------- |
-| `PORT`                                            | `3000`                | HTTP port                                                                                      |
-| `HOST`                                            | `0.0.0.0`             | Bind address                                                                                   |
-| `NODE_ENV`                                        |                       | `production` turns on the production checks below                                              |
-| `TRUSTED_PROXIES`                                 | `0`                   | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer |
-| `DATA_DIR`                                        | `./data`              | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)         |
-| `SESSION_TTL_MS`                                  | `86400000` (24 h)     | Idle time before a conversation resets                                                         |
-| `ENABLE_DEV_ROUTES`                               | on outside production | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production         |
-| `WHATSAPP_VERIFY_TOKEN`                           |                       | The token Meta echoes when you register the webhook                                            |
-| `WHATSAPP_APP_SECRET`                             |                       | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)     |
-| `WHATSAPP_ACCESS_TOKEN`                           |                       | Graph API token. Unset: dry-run                                                                |
-| `WHATSAPP_PHONE_NUMBER_ID`                        |                       | The business number replies are sent from, which deliveries must be for. Unset: dry-run        |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                       | Deliveries for any other business account are ignored. Unset: any                              |
-| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`               | Older messages are dropped as stale or replayed                                                |
-| `WHATSAPP_GRAPH_API_VERSION`                      | `v23.0`               | Graph API version; check Meta's current one                                                    |
-| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                       | When all three are set, this admin is created at startup (or has its password reset)           |
-| `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)      | How long an admin stays signed in                                                              |
+| Variable                                          | Default                                       | Meaning                                                                                        |
+| ------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `PORT`                                            | `3000`                                        | HTTP port                                                                                      |
+| `HOST`                                            | `0.0.0.0`                                     | Bind address                                                                                   |
+| `NODE_ENV`                                        |                                               | `production` turns on the production checks below                                              |
+| `TRUSTED_PROXIES`                                 | `0`                                           | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer |
+| `DATA_DIR`                                        | `./data`                                      | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)         |
+| `SESSION_TTL_MS`                                  | `86400000` (24 h)                             | Idle time before a conversation resets                                                         |
+| `MIGRATE_ON_START`                                | on outside production; on in the Docker image | Apply pending migrations at startup. Off: a pending migration refuses the start                |
+| `ENABLE_DEV_ROUTES`                               | on outside production                         | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production         |
+| `WHATSAPP_VERIFY_TOKEN`                           |                                               | The token Meta echoes when you register the webhook                                            |
+| `WHATSAPP_APP_SECRET`                             |                                               | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)     |
+| `WHATSAPP_ACCESS_TOKEN`                           |                                               | Graph API token. Unset: dry-run                                                                |
+| `WHATSAPP_PHONE_NUMBER_ID`                        |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run        |
+| `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                                               | Deliveries for any other business account are ignored. Unset: any                              |
+| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`                                       | Older messages are dropped as stale or replayed                                                |
+| `WHATSAPP_GRAPH_API_VERSION`                      | `v23.0`                                       | Graph API version; check Meta's current one                                                    |
+| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                                               | When all three are set, this admin is created at startup (or has its password reset)           |
+| `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)                              | How long an admin stays signed in                                                              |
 
 **In production** (`NODE_ENV=production`) the service refuses to start without
 `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and
@@ -349,23 +351,74 @@ All state is SQLite under `DATA_DIR`, in WAL mode:
 | `admin.db`     | admin sign-in sessions                                                                                        | bun-cache |
 | `security.db`  | rate limits, login failures, origin blocks                                                                    | bun-cache |
 
-Money is stored as integer **kobo**. The schema is created on start (`CREATE TABLE IF NOT EXISTS`).
-To start over in development, stop the service and delete `./data`.
+Money is stored as integer **kobo**. To start over in development, stop the service and delete `./data`.
+
+### Migrations
+
+`investnow.db`'s schema is **model-driven**, with [Drizzle](https://orm.drizzle.team):
+
+- **The model** is `src/database/schema.ts`: every table, column, index and CHECK
+  constraint. The repositories' domain types come from it (`typeof users.$inferSelect`).
+  The queries themselves stay hand-written on `Bun.SQL`.
+- **Migrations** are timestamped SQL files that `drizzle-kit` writes from the
+  model into `migrations/`, e.g. `migrations/20261104140152_initial.sql`.
+  `migrations/meta/` holds drizzle-kit's journal and its snapshot of the model
+  after each migration.
+- **Applied migrations** are recorded in `__drizzle_migrations` (a hash of each
+  file and its timestamp), the same table drizzle's own migrator keeps. The app
+  applies them with its own small runner on `Bun.SQL`
+  (`src/database/migrator.ts`), all pending ones in one transaction.
+
+Changing the schema:
+
+```bash
+# 1. edit src/database/schema.ts
+bun run db:generate -- --name add_kyc_level   # writes migrations/<timestamp>_add_kyc_level.sql (review it)
+bun run db:status                             # what this database has applied, and what is pending
+bun run db:migrate                            # apply (development also applies on start)
+```
+
+`bun run db:status` lists every migration as one of:
+
+| State      | Meaning                                                                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `applied`  | recorded, and the file still matches its hash                                                                               |
+| `pending`  | newer than the last applied migration: the next `db:migrate` runs it                                                        |
+| `modified` | applied, but the file changed since. Never edit an applied migration; write a new one                                       |
+| `skipped`  | never applied, but older than the last applied one, so it will never run (e.g. a branch merged out of order). Regenerate it |
+| `missing`  | recorded in the database, but its file is gone                                                                              |
+
+`db:migrate` and the startup refuse to run while anything is `modified` or
+`skipped`. `bun run db:check`, part of `bun run verify`, fails when the model has
+changes that no migration covers.
+
+**On start**, pending migrations are applied when `MIGRATE_ON_START` is on (the
+default outside production, and in the Docker image). With it off, a pending
+migration stops the start with a message naming it: run `bun run db:migrate`
+as a release step instead.
+
+Migrations are forward-only, as with drizzle-kit: undo a change with a new migration.
+The bun-cache and bun-jobs stores (`sessions.db`, `jobs.db`, `admin.db`, `security.db`)
+manage their own schemas and are not part of the model.
 
 ---
 
 ## Development
 
-| Command                     |                                                 |
-| --------------------------- | ----------------------------------------------- |
-| `bun run dev:all`           | API + UIs + type sync, in one terminal          |
-| `bun run dev`               | The API alone (`bun --watch`)                   |
-| `bun run ui:dev`            | The UI dev server alone (`UI_PORT`, `API_URL`)  |
-| `bun run ui:types`          | The type sync alone                             |
-| `bun run ui:types:generate` | Regenerate `ui/src/api.gen.ts` without a server |
-| `bun run ui:build`          | Production builds of both UIs into `dist/`      |
-| `bun run admin:create`      | Create an admin, or reset their password        |
-| `bun run start`             | The API, without watching                       |
+| Command                                |                                                             |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `bun run dev:all`                      | API + UIs + type sync, in one terminal                      |
+| `bun run dev`                          | The API alone (`bun --watch`)                               |
+| `bun run ui:dev`                       | The UI dev server alone (`UI_PORT`, `API_URL`)              |
+| `bun run ui:types`                     | The type sync alone                                         |
+| `bun run ui:types:generate`            | Regenerate `ui/src/api.gen.ts` without a server             |
+| `bun run ui:build`                     | Production builds of both UIs into `dist/`                  |
+| `bun run admin:create`                 | Create an admin, or reset their password                    |
+| `bun run start`                        | The API, without watching                                   |
+| `bun run db:generate -- --name <what>` | Write a timestamped migration from the model                |
+| `bun run db:status`                    | Applied / pending / modified / skipped / missing migrations |
+| `bun run db:migrate`                   | Apply pending migrations                                    |
+| `bun run db:check`                     | Fail if the model has changes no migration covers           |
 
 The UI dev server bundles `ui/index.html` and `ui/admin.html` (TSX and nested
 CSS, no other build tooling) and proxies every other path to the API, WebSockets
@@ -379,8 +432,8 @@ Nest's dependency injection needs, from the working directory's `tsconfig.json`.
 ## Testing and checks
 
 ```bash
-bun test           # 85 tests: parsers, state machine, webhook + origin checks, admin + throttling
-bun run verify     # bun check, bun lint, bun fmt --check, ui:types:check, bun test
+bun test           # 94 tests: parsers, state machine, webhook + origin checks, admin + throttling, migrator
+bun run verify     # bun check, bun lint, bun fmt --check, db:check, ui:types:check, bun test
 bun format         # bun fmt
 ```
 
@@ -405,6 +458,9 @@ docker run -d --name investnow -p 3000:3000 \
 - State lives in the `/data` volume; back it up. Run **one** container per volume:
   SQLite and the per-user ordering are single-host.
 - It has a healthcheck on `GET /health`.
+- Pending migrations are applied on start (`MIGRATE_ON_START=true` in the image). To inspect or
+  migrate by hand: `docker exec investnow bun scripts/db.ts status` (or `migrate`). Create an
+  admin with `docker exec -it investnow bun scripts/create-admin.ts --email … --username …`.
 - Put it behind HTTPS, since Meta requires it and the admin cookie is `Secure`. Set
   `TRUSTED_PROXIES=1` behind one reverse proxy.
 
@@ -447,7 +503,10 @@ Dockerfile, .dockerignore
 - New dependencies outside `@kingsleyweb/*` need sign-off first.
 - Lint with `bun lint` and format with `bun fmt` (`bun format`). Don't add
   package.json scripts named `check` or `lint`: they shadow Bun's built-ins.
+- Schema changes go through the model: edit `src/database/schema.ts`, run
+  `bun run db:generate`, and commit the generated migration. Never edit an applied one.
 - Git: the default branch is `develop`, and every change goes branch → commit → PR → merge.
+  Every commit is signed: `develop` requires verified signatures.
 
 ---
 
@@ -463,6 +522,9 @@ Dockerfile, .dockerignore
 | `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                           |
 | `/admin` answers 503                                           | The admin UI isn't built: `bun run ui:build`, or use the UI dev server                            |
 | `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                            |
+| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                          |
+| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration      |
+| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                     |
 | `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                    |
 
 ---
