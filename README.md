@@ -201,7 +201,7 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 | `WHATSAPP_PHONE_NUMBER_ID`                        |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run        |
 | `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                                               | Deliveries for any other business account are ignored. Unset: any                              |
 | `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`                                       | Older messages are dropped as stale or replayed                                                |
-| `WHATSAPP_GRAPH_API_VERSION`                      | `v23.0`                                       | Graph API version; check Meta's current one                                                    |
+| `WHATSAPP_GRAPH_API_VERSION`                      | `v26.0`                                       | Graph API version replies are sent with (`v26.0` is the newest as of November 2026)            |
 | `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                                               | When all three are set, this admin is created at startup (or has its password reset)           |
 | `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)                              | How long an admin stays signed in                                                              |
 
