@@ -46,8 +46,18 @@ export async function createApp(
   /** `uiSource: false` skips serving the UIs from source (the tests and the OpenAPI export). */
   options: { quiet?: boolean; uiSource?: boolean } = {},
 ): Promise<INestApplication> {
-  const routes =
+  const sourceRoutes =
     options.uiSource === false ? undefined : await uiSourceRoutes(config);
+  // Otherwise the built chat UI (`bun run ui:build`), beside the dev routes it
+  // calls: in the Docker image, served when ENABLE_DEV_ROUTES is on.
+  const chatUi = join(import.meta.dir, "..", "dist", "ui");
+  const builtChat =
+    !sourceRoutes &&
+    config.enableDevRoutes &&
+    existsSync(join(chatUi, "index.html"));
+  const routes =
+    sourceRoutes ??
+    (builtChat ? { "/": Response.redirect("/chat/", 302) } : undefined);
   // rawBody keeps the exact bytes Meta signed, for the X-Hub-Signature-256 check.
   const adapter = new BunHttpAdapter(30_000, {
     // bun-nest has no default body cap: WhatsApp deliveries are small, 1 MB is generous.
@@ -77,14 +87,7 @@ export async function createApp(
     });
   }
 
-  // The built chat UI (`bun run ui:build`), beside the dev routes it calls,
-  // when it isn't being served from source.
-  const chatUi = join(import.meta.dir, "..", "dist", "ui");
-  if (
-    !routes &&
-    config.enableDevRoutes &&
-    existsSync(join(chatUi, "index.html"))
-  ) {
+  if (builtChat) {
     adapter.useStaticAssets(chatUi, { prefix: "/chat", dotfiles: "deny" });
   }
   return app;
