@@ -3,6 +3,7 @@ import {
   Validate,
   ValidBody,
   ValidParams,
+  ValidQuery,
 } from "@kingsleyweb/bun-nest";
 import {
   Controller,
@@ -16,29 +17,47 @@ import { Throttle } from "@nestjs/throttler";
 import type { SQL } from "bun";
 import { ConversationService } from "../conversation/conversation.service";
 import { APP_DB } from "../database/database";
+import { SessionsRepository } from "../database/sessions.repository";
+import { QueueService } from "../queue/queue.service";
 import { toPlainText } from "../whatsapp/messages";
 import { WhatsAppClient } from "../whatsapp/whatsapp.client";
 import type {
+  ConversationQuery,
+  ConversationResponse,
   OutboxResponse,
   ResetParams,
   ResetResponse,
+  SendMessageResponse,
   SimulateBody,
   SimulateResponse,
 } from "./dev.interface";
 import {
+  ConversationParamsDto,
+  ConversationQueryDto,
+  ConversationResponseDto,
   ErrorResponseDto,
   OutboxResponseDto,
   ResetParamsDto,
   ResetResponseDto,
+  SendMessageResponseDto,
   SimulateBodyDto,
   SimulateResponseDto,
 } from "./dev.dto";
 
+/** How often a waiting conversation read looks for something new. */
+const POLL_MS = 250;
+
 /**
  * Chat with the bot without WhatsApp: the API behind the chat UI. Only
- * mounted when ENABLE_DEV_ROUTES is on, never in production. The conversation
- * runs directly, not through the queues, so the replies come back in the
- * response.
+ * mounted when ENABLE_DEV_ROUTES is on, never in production.
+ *
+ * - `POST /dev/messages` puts a message on the inbound queue, exactly as a
+ *   webhook delivery does; its replies go through the outbound queue, which
+ *   delivers them to the simulator instead of WhatsApp.
+ * - `GET /dev/conversations/:waId` reads the stored conversation, from any
+ *   device, and can wait for new entries (long polling).
+ * - `POST /dev/simulate` runs the state machine directly and answers the
+ *   replies in the response (the tests and scripts use it).
  */
 @Controller("dev")
 @Describe({ tags: ["dev"] })
@@ -46,8 +65,76 @@ export class DevController {
   constructor(
     private readonly conversation: ConversationService,
     private readonly whatsapp: WhatsAppClient,
+    private readonly queues: QueueService,
+    private readonly log: SessionsRepository,
     @Inject(APP_DB) private readonly sql: SQL,
   ) {}
+
+  @Post("messages")
+  @HttpCode(202)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Validate({
+    body: SimulateBodyDto,
+    responses: {
+      202: SendMessageResponseDto,
+      400: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  })
+  @Describe({
+    operationId: "sendMessage",
+    summary:
+      "Send a message as a WhatsApp user, through the same queues as a webhook delivery",
+  })
+  async send(@ValidBody() body: SimulateBody): Promise<SendMessageResponse> {
+    const now = new Date();
+    const messageId = `sim.${crypto.randomUUID()}`;
+    await this.queues.enqueueInbound([
+      {
+        messageId,
+        phoneNumberId: null,
+        waId: body.from,
+        ...(body.name ? { name: body.name } : {}),
+        timestamp: Math.floor(now.getTime() / 1000),
+        input: {
+          text: body.text,
+          ...(body.choiceId ? { choiceId: body.choiceId } : {}),
+        },
+        source: "simulator",
+      },
+    ]);
+    return { messageId, at: now.toISOString() };
+  }
+
+  @Get("conversations/:waId")
+  @Validate({
+    params: ConversationParamsDto,
+    query: ConversationQueryDto,
+    responses: {
+      200: ConversationResponseDto,
+      400: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  })
+  @Describe({
+    operationId: "conversation",
+    summary:
+      "A number's stored conversation, oldest first; `wait` holds the answer until something new arrives",
+  })
+  async conversationOf(
+    @ValidParams() params: { waId: string },
+    @ValidQuery() query: ConversationQuery,
+  ): Promise<ConversationResponse> {
+    // Waits stay under Bun's default 10 s idle timeout (the DTO caps them at 8 s).
+    const until = Date.now() + query.wait * 1000;
+    let entries = await this.log.conversation(params.waId, query.after);
+    while (entries.length === 0 && Date.now() < until) {
+      await Bun.sleep(POLL_MS);
+      entries = await this.log.conversation(params.waId, query.after);
+    }
+    const session = await this.conversation.session(params.waId);
+    return { step: session?.step ?? null, entries };
+  }
 
   @Post("simulate")
   @HttpCode(200)
@@ -94,10 +181,11 @@ export class DevController {
   })
   @Describe({
     operationId: "resetUser",
-    summary: "Delete a test user's account and session",
+    summary: "Delete a test number's account, session and stored conversation",
   })
   async reset(@ValidParams() params: ResetParams): Promise<ResetResponse> {
     await this.conversation.endSession(params.waId, "reset from the simulator");
+    await this.log.deleteConversation(params.waId);
     const rows: unknown[] = await this
       .sql`DELETE FROM users WHERE wa_id = ${params.waId} RETURNING id`;
     return { deletedUser: rows.length > 0 };

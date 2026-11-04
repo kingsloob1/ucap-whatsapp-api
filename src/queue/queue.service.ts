@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { APP_CONFIG, type AppConfig } from "../config";
 import { ConversationService } from "../conversation/conversation.service";
+import { SessionsRepository } from "../database/sessions.repository";
 import { KeyedMutex } from "../conversation/keyed-mutex";
 import {
   PermanentSendError,
@@ -77,6 +78,7 @@ export class QueueService
     private readonly jobs: BunJobs,
     private readonly conversation: ConversationService,
     private readonly whatsapp: WhatsAppClient,
+    private readonly log: SessionsRepository,
   ) {}
 
   onModuleInit(): void {
@@ -107,18 +109,16 @@ export class QueueService
       INBOUND_QUEUE,
       async (job) => {
         const { waId, name, input, messageId, phoneNumberId } = job.data;
+        const source = job.data.source ?? "whatsapp";
         const replies = await this.conversation.handle(
           { waId, ...(name ? { name } : {}) },
           input,
-          {
-            source: "whatsapp",
-            phoneNumberId,
-          },
+          { source, phoneNumberId, messageId },
         );
         if (replies.length > 0) {
           await this.outbound.add(
             "reply",
-            { to: waId, inReplyTo: messageId, messages: replies },
+            { to: waId, inReplyTo: messageId, messages: replies, source },
             { jobId: `reply:${messageId}` },
           );
         }
@@ -133,13 +133,19 @@ export class QueueService
       (job, ctx) =>
         this.sendLock.run(job.data.to, async () => {
           let sent = typeof job.progress === "number" ? job.progress : 0;
+          // The simulator's replies are delivered to the simulator (marked
+          // delivered, read back by its page), never sent to WhatsApp.
+          const toWhatsApp = (job.data.source ?? "whatsapp") === "whatsapp";
           for (; sent < job.data.messages.length; sent++) {
             try {
-              await this.whatsapp.send(
-                job.data.to,
-                job.data.messages[sent]!,
-                ctx.signal,
-              );
+              if (toWhatsApp) {
+                await this.whatsapp.send(
+                  job.data.to,
+                  job.data.messages[sent]!,
+                  ctx.signal,
+                );
+              }
+              await this.log.markDelivered(job.data.inReplyTo, sent);
             } catch (error) {
               if (error instanceof PermanentSendError) {
                 throw new UnrecoverableJobError(

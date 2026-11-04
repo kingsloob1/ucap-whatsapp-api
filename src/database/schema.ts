@@ -137,10 +137,23 @@ export const conversationEvents = sqliteTable(
     text: text("text"),
     choiceId: text("choice_id"),
     kind: text("kind"),
+    /** The inbound message this event belongs to (a WhatsApp `wamid.…` or a simulator `sim.…` id). */
+    messageId: text("message_id"),
+    /** For a reply: its position among the replies to that message. */
+    replyIndex: integer("reply_index"),
+    /** The whole message as JSON: a reply's buttons and list rows, or a user's (redacted) input. */
+    payload: text("payload"),
+    /** When the outbound job delivered a reply (to WhatsApp, or to the simulator). */
+    deliveredAt: text("delivered_at"),
     at: text("at").notNull().default(now),
   },
   (t) => [
     index("ix_conversation_events_wa").on(t.waId, t.id),
+    index("ix_conversation_events_message").on(
+      t.messageId,
+      t.direction,
+      t.replyIndex,
+    ),
     check(
       "conversation_events_direction_known",
       sql`${t.direction} IN ('in', 'out')`,

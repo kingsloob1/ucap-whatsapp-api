@@ -14,9 +14,17 @@ export type SessionRecord = typeof conversationSessions.$inferSelect & {
   onboarded: boolean;
 };
 
-export type SessionEvent = Omit<
+/** One logged message, as the admin's session view shows it. */
+export type SessionEvent = Pick<
   typeof conversationEvents.$inferSelect,
-  "waId" | "source"
+  | "id"
+  | "direction"
+  | "stepBefore"
+  | "stepAfter"
+  | "text"
+  | "choiceId"
+  | "kind"
+  | "at"
 >;
 
 export type SessionStatus = "active" | "ended" | "expired";
@@ -41,7 +49,29 @@ export interface Exchange {
   input: InboundInput;
   replies: OutboundMessage[];
   ttlMs: number;
+  /** The inbound message's id; without one, the replies are recorded as delivered at once. */
+  messageId?: string;
 }
+
+/** One message of a conversation, as the simulator shows it. */
+export type ConversationEntry =
+  | {
+      id: number;
+      direction: "in";
+      at: string;
+      messageId: string | null;
+      text: string;
+      choiceId: string | null;
+    }
+  | {
+      id: number;
+      direction: "out";
+      at: string;
+      messageId: string | null;
+      replyIndex: number;
+      deliveredAt: string;
+      message: OutboundMessage;
+    };
 
 export interface SessionRow {
   wa_id: string;

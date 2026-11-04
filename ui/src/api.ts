@@ -1,10 +1,14 @@
 import { createClient, type SchemaSource } from "@kingsleyweb/bun-client";
 import {
+  ConversationParamsDto,
+  ConversationQueryDto,
+  ConversationResponseDto,
   ErrorResponseDto,
   HealthResponseDto,
   OutboxResponseDto,
   ResetParamsDto,
   ResetResponseDto,
+  SendMessageResponseDto,
   SimulateBodyDto,
   SimulateResponseDto,
 } from "../../src/dev/dev.dto";
@@ -18,6 +22,23 @@ import { manifest, type Routes } from "./api.gen";
  * here that no longer exists.
  */
 export const schemas = {
+  "POST /dev/messages": {
+    body: SimulateBodyDto,
+    responses: {
+      202: SendMessageResponseDto,
+      400: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  },
+  "GET /dev/conversations/:waId": {
+    params: ConversationParamsDto,
+    query: ConversationQueryDto,
+    responses: {
+      200: ConversationResponseDto,
+      400: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  },
   "POST /dev/simulate": {
     body: SimulateBodyDto,
     responses: { 200: SimulateResponseDto, 400: ErrorResponseDto },
@@ -30,11 +51,12 @@ export const schemas = {
   "GET /health": { responses: { 200: HealthResponseDto } },
 } satisfies SchemaSource<Routes>["schemas"];
 
-/** Same-origin: the dev server proxies API paths to Nest, and Nest serves the built UI itself. */
+/** Same-origin: the API serves the UI (from source in development, built otherwise). */
 export const api = createClient<Routes>({
   baseUrl: window.location.origin,
   manifest,
   schemas: () => Promise.resolve({ schemas }),
+  // Above the conversation read's longest wait (8 s).
   timeout: 15_000,
   retry: false,
 });

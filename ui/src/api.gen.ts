@@ -4,7 +4,7 @@
  * `manifest` it takes. Do not edit; regenerate it, and run the same command
  * with `--check` in CI.
  *
- * typesHash: 48d60caa4f857fdc
+ * typesHash: 3be3d4044579c404
  */
 import type { RouteManifest } from "@kingsleyweb/bun-client";
 
@@ -12,7 +12,7 @@ import type { RouteManifest } from "@kingsleyweb/bun-client";
  * The documents' hash, as the header records it: the `buster` of a
  * persisted query cache (`@kingsleyweb/bun-client/persist`).
  */
-export const typesHash = "48d60caa4f857fdc";
+export const typesHash = "3be3d4044579c404";
 
 export interface Routes {
   /** Sign in with an email or username and a password */
@@ -231,6 +231,111 @@ export interface Routes {
       };
     };
   };
+  /** A number's stored conversation, oldest first; `wait` holds the answer until something new arrives */
+  "GET /dev/conversations/:waId": {
+    operationId: "conversation";
+    params: {
+      waId: string;
+    };
+    query: {
+      after?: number;
+      wait?: number;
+    };
+    headers: Record<never, never>;
+    body: undefined;
+    responses: {
+      200: {
+        step: string | null;
+        entries: (
+          | {
+              id: number;
+              direction: "in";
+              at: string;
+              messageId: string | null;
+              text: string;
+              choiceId: string | null;
+            }
+          | {
+              id: number;
+              direction: "out";
+              at: string;
+              messageId: string | null;
+              replyIndex: number;
+              deliveredAt: string;
+              message:
+                | {
+                    kind: "text";
+                    body: string;
+                  }
+                | {
+                    kind: "buttons";
+                    body: string;
+                    header?: string;
+                    footer?: string;
+                    buttons: {
+                      id: string;
+                      title: string;
+                    }[];
+                  }
+                | {
+                    kind: "list";
+                    body: string;
+                    header?: string;
+                    footer?: string;
+                    button: string;
+                    sections: {
+                      title: string;
+                      rows: {
+                        id: string;
+                        title: string;
+                        description?: string;
+                      }[];
+                    }[];
+                  };
+            }
+        )[];
+      };
+      400: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+      429: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+    };
+  };
+  /** Send a message as a WhatsApp user, through the same queues as a webhook delivery */
+  "POST /dev/messages": {
+    operationId: "sendMessage";
+    params: Record<never, never>;
+    query: Record<never, never>;
+    headers: Record<never, never>;
+    body: {
+      from: string;
+      name?: string;
+      text?: string;
+      choiceId?: string;
+    };
+    responses: {
+      202: {
+        messageId: string;
+        at: string;
+      };
+      400: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+      429: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+    };
+  };
   /** Messages the dry-run WhatsApp client recorded */
   "GET /dev/outbox": {
     operationId: "outbox";
@@ -338,7 +443,7 @@ export interface Routes {
       };
     };
   };
-  /** Delete a test user's account and session */
+  /** Delete a test number's account, session and stored conversation */
   "DELETE /dev/users/:waId": {
     operationId: "resetUser";
     params: {
@@ -397,6 +502,14 @@ export const manifest = {
   "POST /admin/api/sessions/:waId/reset": {
     operationId: "adminResetSession",
     statuses: [200, 401, 404],
+  },
+  "GET /dev/conversations/:waId": {
+    operationId: "conversation",
+    statuses: [200, 400, 429],
+  },
+  "POST /dev/messages": {
+    operationId: "sendMessage",
+    statuses: [202, 400, 429],
   },
   "GET /dev/outbox": { operationId: "outbox", statuses: [200] },
   "POST /dev/simulate": { operationId: "simulate", statuses: [200, 400, 429] },

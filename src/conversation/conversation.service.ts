@@ -147,6 +147,7 @@ export class ConversationService {
       input,
       replies,
       ttlMs: this.config.sessionTtlMs,
+      ...(meta.messageId ? { messageId: meta.messageId } : {}),
     });
     return replies;
   }
