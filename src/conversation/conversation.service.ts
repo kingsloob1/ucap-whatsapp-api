@@ -36,6 +36,8 @@ import type {
   Contact,
   Context,
   MessageMeta,
+  OnboardingDraft,
+  Parsed,
   PendingAction,
   Session,
   SessionCacheSchema,
@@ -71,6 +73,22 @@ const CHOICE = {
   withdraw: "menu:withdraw",
   buy: "menu:buy",
 } as const;
+
+/** The review's list rows. */
+const REVIEW = {
+  confirm: "review:confirm",
+  bvn: "review:bvn",
+  dob: "review:dob",
+  products: "review:products",
+  pin: "review:pin",
+} as const;
+
+/** What an edit step accepts to leave the current value as it is. */
+const KEEP_WORDS = new Set(["back", "keep", "review"]);
+
+const BVN_TAKEN =
+  "This BVN is already linked to another InvestNow account. Please check the number and try again, " +
+  "or reply CANCEL to stop.";
 
 /**
  * The InvestNow conversation: a state machine over the session stored in
@@ -188,6 +206,14 @@ export class ConversationService {
         return this.setPin(session, ctx);
       case "confirm_pin":
         return this.confirmPin(session, ctx);
+      case "review":
+        return this.review(session, ctx);
+      case "edit_bvn":
+      case "edit_dob":
+      case "edit_products":
+      case "edit_pin":
+      case "edit_pin_confirm":
+        return this.edit(session, ctx);
       case "menu":
         return this.menuChoice(user!, ctx);
       case "fund_amount":
@@ -252,8 +278,8 @@ export class ConversationService {
         next: { step: "ask_bvn" },
         replies: [
           text(
-            "Great, let's get you set up! 🚀\n\n*Step 1 of 4*\nPlease enter your 11-digit Bank Verification Number (BVN).\n\n" +
-              `Don't know it? Dial ${ussd(BVN_USSD)} from the phone number linked to your bank account.`,
+            "Great, let's get you set up! 🚀\n\n" +
+              bvnPrompt("*Step 1 of 4*\nPlease enter"),
           ),
         ],
       };
@@ -274,27 +300,12 @@ export class ConversationService {
   }
 
   private async askBvn({ input }: Context): Promise<Transition> {
-    const bvn = parseBvn(input.text);
+    const bvn = await this.checkBvn(input.text);
     if (!bvn.ok)
       return { next: { step: "ask_bvn" }, replies: [text(bvn.error)] };
-    if (await this.users.isBvnRegistered(bvn.value)) {
-      return {
-        next: { step: "ask_bvn" },
-        replies: [
-          text(
-            "This BVN is already linked to another InvestNow account. Please check the number and try again, " +
-              "or reply CANCEL to stop.",
-          ),
-        ],
-      };
-    }
     return {
       next: { step: "ask_dob", bvn: bvn.value },
-      replies: [
-        text(
-          "*Step 2 of 4*\nPlease enter your date of birth as DD/MM/YYYY, for example 25/12/1990.",
-        ),
-      ],
+      replies: [text(dobPrompt("*Step 2 of 4*\nPlease enter"))],
     };
   }
 
@@ -310,7 +321,7 @@ export class ConversationService {
         bvn: session.bvn,
         dateOfBirth: dob.value,
       },
-      replies: [productSelectionPrompt()],
+      replies: [text(productsPrompt("*Step 3 of 4*\nWhich products are"))],
     };
   }
 
@@ -318,22 +329,19 @@ export class ConversationService {
     session: Extract<Session, { step: "select_products" }>,
     { input }: Context,
   ): Transition {
-    const selection = parseSelection(input.text, PRODUCTS.length);
-    if (!selection.ok)
-      return { next: session, replies: [text(selection.error)] };
-    const productCodes = selection.value.map((i) => PRODUCTS[i]!.code);
+    const products = parseProducts(input.text);
+    if (!products.ok) return { next: session, replies: [text(products.error)] };
     return {
       next: {
         step: "set_pin",
         bvn: session.bvn,
         dateOfBirth: session.dateOfBirth,
-        productCodes,
+        productCodes: products.value,
       },
       replies: [
         text(
-          `You selected: ${productCodes.map(productTitle).join(", ")}.\n\n` +
-            "*Step 4 of 4*\nCreate a 4-digit transaction PIN. You'll use it to approve transactions and view balances.\n\n" +
-            "🔒 _You can delete your PIN messages from this chat after sending them._",
+          `You selected: ${products.value.map(productTitle).join(", ")}.\n\n` +
+            pinPrompt("*Step 4 of 4*\nCreate a"),
         ),
       ],
     };
@@ -354,17 +362,17 @@ export class ConversationService {
 
   private async confirmPin(
     session: Extract<Session, { step: "confirm_pin" }>,
-    { input, contact }: Context,
+    { input }: Context,
   ): Promise<Transition> {
-    const pin = input.text.trim();
-    if (!/^\d{4}$/.test(pin))
+    const { step: _step, ...draft } = session;
+    const check = await confirmNewPin(input.text, draft.pinHash);
+    if (check === "invalid")
       return {
         next: session,
         replies: [text("Please enter your 4-digit PIN again to confirm it.")],
       };
-
-    const { pinHash, ...rest } = session;
-    if (!(await Bun.password.verify(pin, pinHash))) {
+    if (check === "mismatch") {
+      const { pinHash: _pinHash, ...rest } = draft;
       return {
         next: { ...rest, step: "set_pin" },
         replies: [
@@ -372,24 +380,223 @@ export class ConversationService {
         ],
       };
     }
+    return this.showReview(draft, "Almost done! ✅");
+  }
 
+  /* ------------------------------------------------- onboarding review */
+
+  /** Shows every answer, with a row to confirm and one to change each of them. */
+  private showReview(draft: OnboardingDraft, lead: string): Transition {
+    const products = draft.productCodes.map(productTitle).join(", ");
+    return {
+      next: { step: "review", draft },
+      replies: [
+        list(
+          `${lead}\n\n*Please review your details*\n\n` +
+            `BVN: ${hideBvn(draft.bvn)}\n` +
+            `Date of birth: ${formatDob(draft.dateOfBirth)}\n` +
+            `Products: ${products}\n` +
+            "PIN: ••••\n\n" +
+            "Tap *Review* to confirm and open your account, or to change any of these.",
+          "Review",
+          [
+            {
+              title: "Your details",
+              rows: [
+                {
+                  id: REVIEW.confirm,
+                  title: "Confirm & create",
+                  description: "Open your InvestNow account",
+                },
+                {
+                  id: REVIEW.bvn,
+                  title: "Edit BVN",
+                  description: hideBvn(draft.bvn),
+                },
+                {
+                  id: REVIEW.dob,
+                  title: "Edit date of birth",
+                  description: formatDob(draft.dateOfBirth),
+                },
+                {
+                  id: REVIEW.products,
+                  title: "Edit products",
+                  description: products,
+                },
+                {
+                  id: REVIEW.pin,
+                  title: "Change PIN",
+                  description: "Set a new 4-digit PIN",
+                },
+              ],
+            },
+          ],
+          { footer: "Or reply 1 to 5, or CANCEL to stop" },
+        ),
+      ],
+    };
+  }
+
+  private async review(
+    session: Extract<Session, { step: "review" }>,
+    { answer, contact }: Context,
+  ): Promise<Transition> {
+    const { draft } = session;
+    const choice = matchChoice(answer, [
+      [REVIEW.confirm, ["1", "confirm", "create", "yes", "y", "ok"]],
+      [REVIEW.bvn, ["2", "bvn", "edit bvn"]],
+      [REVIEW.dob, ["3", "dob", "date of birth", "edit date of birth"]],
+      [REVIEW.products, ["4", "products", "edit products"]],
+      [REVIEW.pin, ["5", "pin", "change pin"]],
+    ]);
+    const keep = "\n\nReply *BACK* to keep it as it is.";
+    switch (choice) {
+      case REVIEW.confirm:
+        return this.createAccount(draft, contact);
+      case REVIEW.bvn:
+        return {
+          next: { step: "edit_bvn", draft },
+          replies: [
+            text(
+              bvnPrompt(`*Edit BVN*\nCurrent: ${hideBvn(draft.bvn)}\n\nEnter`) +
+                keep,
+            ),
+          ],
+        };
+      case REVIEW.dob:
+        return {
+          next: { step: "edit_dob", draft },
+          replies: [
+            text(
+              dobPrompt(
+                `*Edit date of birth*\nCurrent: ${formatDob(draft.dateOfBirth)}\n\nEnter`,
+              ) + keep,
+            ),
+          ],
+        };
+      case REVIEW.products:
+        return {
+          next: { step: "edit_products", draft },
+          replies: [
+            text(
+              productsPrompt(
+                `*Edit products*\nCurrent: ${draft.productCodes.map(productTitle).join(", ")}\n\nWhich products are`,
+              ) + keep,
+            ),
+          ],
+        };
+      case REVIEW.pin:
+        return {
+          next: { step: "edit_pin", draft },
+          replies: [text(pinPrompt("*Change PIN*\nCreate a new") + keep)],
+        };
+      default:
+        return this.showReview(
+          draft,
+          "Sorry, I didn't catch that. Please choose an option.",
+        );
+    }
+  }
+
+  /** One answer being changed from the review: a valid new value, or BACK, returns to it. */
+  private async edit(
+    session: Extract<
+      Session,
+      {
+        step:
+          | "edit_bvn"
+          | "edit_dob"
+          | "edit_products"
+          | "edit_pin"
+          | "edit_pin_confirm";
+      }
+    >,
+    { input, answer }: Context,
+  ): Promise<Transition> {
+    const { draft } = session;
+    if (KEEP_WORDS.has(answer))
+      return this.showReview(draft, "No changes made.");
+
+    switch (session.step) {
+      case "edit_bvn": {
+        const bvn = await this.checkBvn(input.text);
+        if (!bvn.ok) return { next: session, replies: [text(bvn.error)] };
+        return this.showReview({ ...draft, bvn: bvn.value }, "BVN updated. ✅");
+      }
+      case "edit_dob": {
+        const dob = parseDateOfBirth(input.text);
+        if (!dob.ok) return { next: session, replies: [text(dob.error)] };
+        return this.showReview(
+          { ...draft, dateOfBirth: dob.value },
+          "Date of birth updated. ✅",
+        );
+      }
+      case "edit_products": {
+        const products = parseProducts(input.text);
+        if (!products.ok)
+          return { next: session, replies: [text(products.error)] };
+        return this.showReview(
+          { ...draft, productCodes: products.value },
+          "Products updated. ✅",
+        );
+      }
+      case "edit_pin": {
+        const pin = parseNewPin(input.text);
+        if (!pin.ok) return { next: session, replies: [text(pin.error)] };
+        return {
+          next: {
+            step: "edit_pin_confirm",
+            draft,
+            newPinHash: await Bun.password.hash(pin.value),
+          },
+          replies: [text("Please enter your new PIN again to confirm it.")],
+        };
+      }
+      case "edit_pin_confirm": {
+        const check = await confirmNewPin(input.text, session.newPinHash);
+        if (check === "invalid")
+          return {
+            next: session,
+            replies: [
+              text("Please enter your new 4-digit PIN again to confirm it."),
+            ],
+          };
+        if (check === "mismatch")
+          return {
+            next: { step: "edit_pin", draft },
+            replies: [
+              text(
+                "Those PINs don't match. Please create your new 4-digit PIN again, or reply *BACK* to keep your current PIN.",
+              ),
+            ],
+          };
+        return this.showReview(
+          { ...draft, pinHash: session.newPinHash },
+          "PIN changed. ✅",
+        );
+      }
+    }
+  }
+
+  private async createAccount(
+    draft: OnboardingDraft,
+    contact: Contact,
+  ): Promise<Transition> {
     let user: User;
     try {
       user = await this.users.create({
         waId: contact.waId,
         name: contact.name ?? null,
-        bvn: session.bvn,
-        dateOfBirth: session.dateOfBirth,
-        pinHash,
-        productCodes: session.productCodes,
+        ...draft,
       });
     } catch (error) {
       if (error instanceof DuplicateUserError && error.field === "bvn") {
         return {
-          next: { step: "ask_bvn" },
+          next: { step: "edit_bvn", draft },
           replies: [
             text(
-              "This BVN was just linked to another InvestNow account. Please enter a different BVN.",
+              "This BVN was just linked to another InvestNow account. Please enter a different BVN, " +
+                "or reply *BACK* to review your details.",
             ),
           ],
         };
@@ -404,12 +611,21 @@ export class ConversationService {
         text(
           `🎉 Your InvestNow account is ready, ${firstName(user.name ?? undefined)}!\n\n` +
             `BVN: ${maskBvn(user.bvn)}\n` +
-            `Products: ${session.productCodes.map(productTitle).join(", ")}\n\n` +
+            `Products: ${draft.productCodes.map(productTitle).join(", ")}\n\n` +
             "Fund your wallet to start investing.",
         ),
         ...menu.replies,
       ],
     };
+  }
+
+  /** A well-formed BVN that isn't registered yet. */
+  private async checkBvn(input: string): Promise<Parsed<string>> {
+    const bvn = parseBvn(input);
+    if (!bvn.ok) return bvn;
+    if (await this.users.isBvnRegistered(bvn.value))
+      return { ok: false, error: BVN_TAKEN };
+    return bvn;
   }
 
   /* --------------------------------------------------------------- menu */
@@ -748,6 +964,12 @@ function isOnboardedStep(session: Session): boolean {
     case "select_products":
     case "set_pin":
     case "confirm_pin":
+    case "review":
+    case "edit_bvn":
+    case "edit_dob":
+    case "edit_products":
+    case "edit_pin":
+    case "edit_pin_confirm":
       return false;
     default:
       return true;
@@ -777,15 +999,62 @@ function matchProduct(answer: string) {
   );
 }
 
-function productSelectionPrompt(): OutboundMessage {
+/** The BVN prompt, after `lead` (e.g. "*Step 1 of 4*\nPlease enter"). */
+function bvnPrompt(lead: string): string {
+  return (
+    `${lead} your 11-digit Bank Verification Number (BVN).\n\n` +
+    `Don't know it? Dial ${ussd(BVN_USSD)} from the phone number linked to your bank account.`
+  );
+}
+
+function dobPrompt(lead: string): string {
+  return `${lead} your date of birth as DD/MM/YYYY, for example 25/12/1990.`;
+}
+
+function productsPrompt(lead: string): string {
   const lines = PRODUCTS.map(
     (p, i) => `*${i + 1}.* ${p.title} — ${p.description}`,
   );
-  return text(
-    "*Step 3 of 4*\nWhich products are you interested in? You can choose more than one.\n\n" +
-      `${lines.join("\n")}\n\n` +
-      "Reply with the numbers separated by commas (e.g. *1,3,5*), or *all*.",
+  return (
+    `${lead} you interested in? You can choose more than one.\n\n` +
+    `${lines.join("\n")}\n\n` +
+    "Reply with the numbers separated by commas (e.g. *1,3,5*), or *all*."
   );
+}
+
+function pinPrompt(lead: string): string {
+  return (
+    `${lead} 4-digit transaction PIN. You'll use it to approve transactions and view balances.\n\n` +
+    "🔒 _You can delete your PIN messages from this chat after sending them._"
+  );
+}
+
+/** The product codes a selection like "1,3,5" names. */
+function parseProducts(input: string): Parsed<string[]> {
+  const selection = parseSelection(input, PRODUCTS.length);
+  if (!selection.ok) return selection;
+  return { ok: true, value: selection.value.map((i) => PRODUCTS[i]!.code) };
+}
+
+/** Checks the repeat of a new PIN against its hash. */
+async function confirmNewPin(
+  input: string,
+  pinHash: string,
+): Promise<"invalid" | "mismatch" | "ok"> {
+  const pin = input.trim();
+  if (!/^\d{4}$/.test(pin)) return "invalid";
+  return (await Bun.password.verify(pin, pinHash)) ? "ok" : "mismatch";
+}
+
+/** The BVN with all but its last 4 digits as dots: no asterisks to pair up as WhatsApp bold. */
+function hideBvn(bvn: string): string {
+  return `${"•".repeat(Math.max(0, bvn.length - 4))}${bvn.slice(-4)}`;
+}
+
+/** An ISO date as DD/MM/YYYY. */
+function formatDob(iso: string): string {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 function productPicker(

@@ -148,7 +148,10 @@ stateDiagram-v2
   SelectProducts --> SetPIN: e.g. 1,3,5 or all
   SetPIN --> ConfirmPIN: 4 digits, not 1111/1234
   ConfirmPIN --> SetPIN: mismatch
-  ConfirmPIN --> Menu: saved to investnow.db
+  ConfirmPIN --> Review: match
+  Review --> EditAnswer: Edit BVN, date of birth, products or PIN
+  EditAnswer --> Review: new value, or BACK
+  Review --> Menu: Confirm, saved to investnow.db
   Menu --> FundAmount: Fund wallet
   Menu --> WithdrawAmount: Withdraw
   Menu --> BuyProduct: Buy products
@@ -169,6 +172,10 @@ stateDiagram-v2
     Fund, Stocks and Trustees. Several can be chosen as `1,3,5`, `1 3 5`, `1, 3 and 5` or `all`.
   - **PIN**: 4 digits, with repeated digits and sequences refused, then confirmed.
     It is stored only as an argon2id hash (`Bun.password`), including while it is being confirmed.
+  - **Review**: before anything is saved, a list shows the BVN (masked), date of birth, products and
+    PIN (hidden), with **Confirm & create** and a row to change each answer (or reply `1`–`5`).
+    An edit is validated like the original step and returns to the review; `BACK` keeps the current
+    value. A new PIN is confirmed again. The account is created only on **Confirm & create**.
 - **Menu** (an interactive list, or reply `1`–`5`):
   - **Fund wallet**: amount, then PIN.
   - **Check balance**: PIN, then the wallet, each product and the total.

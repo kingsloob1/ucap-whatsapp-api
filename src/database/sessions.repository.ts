@@ -12,16 +12,21 @@ import type {
 } from "./sessions.interface";
 
 /** Steps whose typed input is a secret (a PIN) or PII (a BVN), and how to log it. */
+const hidePin = () => "••••";
+const hideBvn = (text: string) => {
+  const digits = text.replace(/\D/g, "");
+  return digits.length > 4
+    ? `${"•".repeat(digits.length - 4)}${digits.slice(-4)}`
+    : "•".repeat(digits.length);
+};
 const REDACT: Record<string, (text: string) => string> = {
-  set_pin: () => "••••",
-  confirm_pin: () => "••••",
-  authorize: () => "••••",
-  ask_bvn: (text) => {
-    const digits = text.replace(/\D/g, "");
-    return digits.length > 4
-      ? `${"•".repeat(digits.length - 4)}${digits.slice(-4)}`
-      : "•".repeat(digits.length);
-  },
+  set_pin: hidePin,
+  confirm_pin: hidePin,
+  edit_pin: hidePin,
+  edit_pin_confirm: hidePin,
+  authorize: hidePin,
+  ask_bvn: hideBvn,
+  edit_bvn: hideBvn,
 };
 
 function toRecord(row: SessionRow): SessionRecord {

@@ -60,7 +60,8 @@ async function onboard(waId: string, bvn: string, pin = "4826") {
   await say(waId, "25/12/1990");
   await say(waId, "1,5");
   await say(waId, pin);
-  return say(waId, pin);
+  await say(waId, pin);
+  return say(waId, tap("review:confirm", "Confirm & create"));
 }
 
 describe("onboarding", () => {
@@ -126,6 +127,14 @@ describe("onboarding", () => {
 
     await say(waId, "4826");
     r = await say(waId, "4826");
+    expect(r.step).toBe("review");
+    expect(r.replies[0]).toMatchObject({ kind: "list" });
+    expect(r.body).toContain("BVN: •••••••4455");
+    expect(r.body).toContain("Date of birth: 25/12/1990");
+    expect(r.body).toContain("Products: Money Market Fund, Stocks, Trustees");
+    expect(await users.findByWaId(waId)).toBeNull(); // nothing saved before the confirm
+
+    r = await say(waId, tap("review:confirm", "Confirm & create"));
     expect(r.step).toBe("menu");
     expect(r.replies.map((m) => m.kind)).toEqual(["text", "list"]);
     expect(r.body).toContain("*******4455");
@@ -163,6 +172,111 @@ describe("onboarding", () => {
     expect(r.step).toBe("menu");
     expect(r.replies[0]).toMatchObject({ kind: "list" });
     expect(r.body).toContain("Welcome back");
+  });
+});
+
+describe("editing onboarding answers before the account is created", () => {
+  const waId = "2348000000006";
+
+  async function toReview() {
+    await say(waId, "hi");
+    await say(waId, tap("onboard:proceed"));
+    await say(waId, "44455566677");
+    await say(waId, "01/02/1985");
+    await say(waId, "2");
+    await say(waId, "4826");
+    return say(waId, "4826");
+  }
+
+  test("the review lists every answer and an edit row for each", async () => {
+    const r = await toReview();
+    expect(r.step).toBe("review");
+    const message = r.replies[0]!;
+    expect(message.kind).toBe("list");
+    if (message.kind === "list")
+      expect(message.sections[0]!.rows.map((row) => row.id)).toEqual([
+        "review:confirm",
+        "review:bvn",
+        "review:dob",
+        "review:products",
+        "review:pin",
+      ]);
+  });
+
+  test("an edit validates like the original step, then returns to the review", async () => {
+    let r = await say(waId, tap("review:bvn", "Edit BVN"));
+    expect(r.step).toBe("edit_bvn");
+    expect(r.body).toContain("Current: •••••••6677");
+
+    r = await say(waId, "123");
+    expect(r.step).toBe("edit_bvn");
+    expect(r.body).toContain("11 digits");
+
+    r = await say(waId, "22233344455"); // registered by the onboarding tests
+    expect(r.step).toBe("edit_bvn");
+    expect(r.body).toContain("already linked");
+
+    r = await say(waId, "55566677788");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("BVN updated");
+    expect(r.body).toContain("BVN: •••••••7788");
+  });
+
+  test("date of birth and products, typed with the numbers instead of tapping", async () => {
+    expect((await say(waId, "3")).step).toBe("edit_dob");
+    expect((await say(waId, "01/01/2015")).body).toContain("at least 18");
+    let r = await say(waId, "15/06/1992");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("Date of birth: 15/06/1992");
+
+    expect((await say(waId, "edit products")).step).toBe("edit_products");
+    r = await say(waId, "1,4");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("Products: Money Market Fund, Equity Fund");
+  });
+
+  test("BACK leaves the value as it was", async () => {
+    expect((await say(waId, tap("review:dob"))).step).toBe("edit_dob");
+    const r = await say(waId, "back");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("No changes made");
+    expect(r.body).toContain("Date of birth: 15/06/1992");
+  });
+
+  test("changing the PIN is confirmed too, and a mismatch asks again", async () => {
+    expect((await say(waId, tap("review:pin"))).step).toBe("edit_pin");
+    expect((await say(waId, "1234")).step).toBe("edit_pin"); // a sequence
+    expect((await say(waId, "5917")).step).toBe("edit_pin_confirm");
+    let r = await say(waId, "5918");
+    expect(r.step).toBe("edit_pin");
+    expect(r.body).toContain("don't match");
+    await say(waId, "5917");
+    r = await say(waId, "5917");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("PIN changed");
+    expect(JSON.stringify(await conversation.session(waId))).not.toContain(
+      "5917",
+    );
+  });
+
+  test("an unknown reply shows the review again", async () => {
+    const r = await say(waId, "maybe");
+    expect(r.step).toBe("review");
+    expect(r.body).toContain("didn't catch that");
+  });
+
+  test("confirming saves the edited answers", async () => {
+    const r = await say(waId, "confirm");
+    expect(r.step).toBe("menu");
+    const user = (await users.findByWaId(waId))!;
+    expect(user).toMatchObject({
+      bvn: "55566677788",
+      dateOfBirth: "1992-06-15",
+    });
+    expect(await Bun.password.verify("5917", user.pinHash)).toBe(true);
+    expect(
+      (await users.holdings(user.id)).map((h) => h.productCode).sort(),
+    ).toEqual(["EQF", "MMF"]);
   });
 });
 
