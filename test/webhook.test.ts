@@ -274,6 +274,25 @@ describe("proof of origin", () => {
   });
 });
 
+test("health answers the server's date and time, to the millisecond", async () => {
+  const before = Date.now();
+  const res = await fetch(`${base}/health`);
+  const after = Date.now();
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    status: string;
+    serverTime: string;
+    epochMs: number;
+  };
+  expect(body.status).toBe("ok");
+  expect(body.serverTime).toMatch(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+  );
+  expect(Date.parse(body.serverTime)).toBe(body.epochMs);
+  expect(body.epochMs).toBeGreaterThanOrEqual(before);
+  expect(body.epochMs).toBeLessThanOrEqual(after);
+});
+
 test("the dev simulator answers the replies directly", async () => {
   const res = await fetch(`${base}/dev/simulate`, {
     method: "POST",

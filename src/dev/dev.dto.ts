@@ -76,7 +76,13 @@ export const OutboxResponseDto = z.object({
   ),
 });
 
-export const HealthResponseDto = z.object({ status: z.literal("ok") });
+export const HealthResponseDto = z.object({
+  status: z.literal("ok"),
+  /** The server's current date and time, ISO 8601 in UTC with milliseconds. */
+  serverTime: z.iso.datetime({ precision: 3 }),
+  /** The same instant as milliseconds since the Unix epoch. */
+  epochMs: z.number().int(),
+});
 
 /** Nest's answer to a request that failed validation, or any other HTTP error. */
 export const ErrorResponseDto = z.object({

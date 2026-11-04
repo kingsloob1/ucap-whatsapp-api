@@ -149,8 +149,9 @@ stateDiagram-v2
 ```
 
 - **Welcome:** a new user gets **Proceed** and **Close** buttons; an onboarded user gets the menu.
+  New users, and anyone whose session closes, are also told about InvestNow's USSD service, `*7277#`.
 - **Onboarding:**
-  - **BVN**: 11 digits, not already registered. The prompt tells users who don't know it to dial `*7277#`.
+  - **BVN**: 11 digits, not already registered. The prompt tells users who don't know it to dial `*565*0#`.
   - **Date of birth**: `DD/MM/YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY` or `YYYY-MM-DD`; the user must be at least 18.
   - **Products**: Money Market Fund, Fixed Income Fund, Balanced Fund, Equity
     Fund, Stocks and Trustees. Several can be chosen as `1,3,5`, `1 3 5`, `1, 3 and 5` or `all`.
@@ -202,25 +203,25 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 
 ## HTTP endpoints
 
-| Method and path                        | Auth                       | Throttle                | What                                                                                |
-| -------------------------------------- | -------------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
-| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                               |
-| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                     |
-| `GET /health`                          |                            | 120/min                 | `{ "status": "ok" }`                                                                |
-| `GET /admin`                           |                            |                         | The admin UI                                                                        |
-| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                |
-| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                     |
-| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                 |
-| `GET /admin/api/sessions`              | cookie                     | 120/min                 | `?source=whatsapp\|simulator&status=active\|expired\|ended&search=&page=&pageSize=` |
-| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                 |
-| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                               |
-| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                    |
-| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                               |
-| `POST /dev/simulate`                   | dev only                   | 60/min                  | `{ from, name?, text, choiceId? }` → `{ step, replies, transcript }`                |
-| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test user and their session                                               |
-| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                               |
-| `GET /chat/`                           | dev only                   |                         | The built chat simulator                                                            |
-| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                               |
+| Method and path                        | Auth                       | Throttle                | What                                                                                                                                      |
+| -------------------------------------- | -------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                                                                     |
+| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                                                                           |
+| `GET /health`                          |                            | 120/min                 | `{ "status": "ok", "serverTime": "2026-11-04T13:05:12.345Z", "epochMs": 1793797512345 }`: the server\'s date and time, to the millisecond |
+| `GET /admin`                           |                            |                         | The admin UI                                                                                                                              |
+| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                                                                      |
+| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                                                                           |
+| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                                                                       |
+| `GET /admin/api/sessions`              | cookie                     | 120/min                 | `?source=whatsapp\|simulator&status=active\|expired\|ended&search=&page=&pageSize=`                                                       |
+| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                                                                       |
+| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                                                                                     |
+| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                                                                          |
+| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                                                                                     |
+| `POST /dev/simulate`                   | dev only                   | 60/min                  | `{ from, name?, text, choiceId? }` → `{ step, replies, transcript }`                                                                      |
+| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test user and their session                                                                                                     |
+| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                                                                     |
+| `GET /chat/`                           | dev only                   |                         | The built chat simulator                                                                                                                  |
+| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                                                                     |
 
 Validation errors answer `400` with `{ statusCode, message: string[], error }`.
 
