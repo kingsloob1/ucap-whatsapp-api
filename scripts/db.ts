@@ -10,13 +10,14 @@
  */
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import { loadConfig } from "../src/config";
 import { connectAppDatabase } from "../src/database/database";
 import {
@@ -26,6 +27,15 @@ import {
 } from "../src/database/migrator";
 
 const command = process.argv[2];
+
+/** drizzle-kit's entry point in this project's node_modules (its package exports don't expose it). */
+const DRIZZLE_KIT = join(
+  import.meta.dir,
+  "..",
+  "node_modules",
+  "drizzle-kit",
+  "bin.cjs",
+);
 
 const MARK: Record<string, string> = {
   applied: "✓ applied ",
@@ -82,6 +92,12 @@ async function migrate(): Promise<number> {
  * changes" counts as a pass: it can fail and still exit 0.
  */
 async function check(): Promise<number> {
+  if (!existsSync(DRIZZLE_KIT)) {
+    console.error(
+      `drizzle-kit is not installed (${DRIZZLE_KIT}): run \`bun install\`.`,
+    );
+    return 2;
+  }
   const work = mkdtempSync(join(tmpdir(), "investnow-db-check-"));
   try {
     cpSync(MIGRATIONS_DIR, join(work, "migrations"), { recursive: true });
@@ -90,20 +106,23 @@ async function check(): Promise<number> {
       join(work, "drizzle.config.ts"),
       `export default ${JSON.stringify({
         dialect: "sqlite",
-        schema: relative(work, resolve("src/database/schema.ts")),
+        schema: relative(
+          work,
+          join(import.meta.dir, "..", "src", "database", "schema.ts"),
+        ),
         out: "./migrations",
         migrations: { prefix: "timestamp" },
       })};\n`,
     );
-    const run = Bun.spawnSync(
-      [process.execPath, "x", "drizzle-kit", "generate"],
-      {
-        cwd: work,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, NODE_PATH: resolve("node_modules") },
-      },
-    );
+    // The project's own drizzle-kit, never one `bun x` would fetch: from the
+    // temporary directory it finds no local binary and downloads a copy that
+    // cannot see this project's drizzle-orm.
+    const run = Bun.spawnSync([process.execPath, DRIZZLE_KIT, "generate"], {
+      cwd: work,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const output = `${run.stdout.toString()}${run.stderr.toString()}`;
     const added = readdirSync(join(work, "migrations")).filter(
       (f) => !before.has(f),
