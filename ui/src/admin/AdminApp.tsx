@@ -1,4 +1,10 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { adminApi, problemText } from "./api";
 import type {
   MeResponse,
@@ -184,6 +190,9 @@ function Dashboard({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
     return () => clearInterval(timer);
   }, [load]);
 
+  const closeDrawer = useCallback(() => setSelected(null), []);
+  const refresh = useCallback(() => void load(), [load]);
+
   async function signOut() {
     await adminApi.post("/admin/api/logout").catch(() => undefined);
     onSignedOut();
@@ -343,8 +352,8 @@ function Dashboard({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
       {selected && (
         <SessionDrawer
           waId={selected}
-          onClose={() => setSelected(null)}
-          onChanged={() => void load()}
+          onClose={closeDrawer}
+          onChanged={refresh}
           onSignedOut={onSignedOut}
         />
       )}
@@ -400,18 +409,28 @@ function SessionDrawer({
   }, [waId, onSignedOut]);
 
   useEffect(() => {
+    // A different session: start from a clean drawer.
     setDetail(null);
     setConfirming(false);
     setNotice(null);
+    setError(null);
+  }, [waId]);
+
+  useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), 5_000);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    return () => clearInterval(timer);
+  }, [load]);
+
+  // The latest onClose, so the key listener isn't re-bound on every parent render.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) =>
+      e.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [load, onClose]);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function reset() {
     const r = await adminApi.post("/admin/api/sessions/:waId/reset", {

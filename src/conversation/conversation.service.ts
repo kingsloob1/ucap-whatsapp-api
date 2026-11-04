@@ -244,7 +244,8 @@ export class ConversationService {
         replies: [
           text(
             "Great, let's get you set up! 🚀\n\n*Step 1 of 4*\nPlease enter your 11-digit Bank Verification Number (BVN).\n\n" +
-              "_Don't know it? Dial *565*0# from the phone number linked to your bank account._",
+              // Monospace keeps WhatsApp from pairing the USSD code's asterisk with another as bold.
+              "Don't know it? Dial ```*7277#``` from the phone number linked to your bank account.",
           ),
         ],
       };

@@ -85,7 +85,10 @@ describe("onboarding", () => {
 
   test("BVN, date of birth, products and PIN, with the errors in between", async () => {
     await say(waId, "hi");
-    expect((await say(waId, tap("onboard:proceed"))).step).toBe("ask_bvn");
+    const prompt = await say(waId, tap("onboard:proceed"));
+    expect(prompt.step).toBe("ask_bvn");
+    // Monospace: the USSD code's asterisk must never pair up as WhatsApp bold.
+    expect(prompt.body).toContain("```*7277#```");
 
     let r = await say(waId, "12345");
     expect(r.step).toBe("ask_bvn");
