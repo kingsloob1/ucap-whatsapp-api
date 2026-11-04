@@ -1,0 +1,34 @@
+{
+  // Bun reads emitDecoratorMetadata from the tsconfig.json in the working
+  // directory (oven-sh/bun#28605), so run the app and tests from this folder.
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": ["bun"],
+
+    // NestJS needs legacy decorators and their metadata.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "ui/**/*.ts",
+    "ui/**/*.tsx",
+    "scripts/**/*.ts"
+  ]
+}
