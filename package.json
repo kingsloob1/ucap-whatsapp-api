@@ -1,0 +1,45 @@
+{
+  "name": "ucap-whatsapp-api",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "InvestNow WhatsApp Business webhook service: NestJS on Bun with a SQLite-backed conversation state machine",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "dev": "bun --watch src/main.ts",
+    "dev:all": "bun scripts/dev.ts",
+    "ui:dev": "bun --hot ui/server.ts",
+    "ui:build": "rm -rf dist/ui dist/admin && bun build ui/index.html --outdir dist/ui --production && bun build ui/admin.html --outdir dist/admin --production --public-path /admin/static/",
+    "ui:types": "bun-client watch --out ui/src/api.gen.ts",
+    "ui:types:generate": "bun-client generate --module scripts/openapi.ts --out ui/src/api.gen.ts",
+    "ui:types:check": "bun-client generate --module scripts/openapi.ts --out ui/src/api.gen.ts --check",
+    "admin:create": "bun scripts/create-admin.ts",
+    "test": "bun test",
+    "typecheck": "bun check",
+    "format": "bun fmt",
+    "format:check": "bun fmt --check",
+    "verify": "bun check && bun lint && bun fmt --check && bun run ui:types:check && bun test"
+  },
+  "dependencies": {
+    "@kingsleyweb/bun-cache": "3.0.0-rc.0",
+    "@kingsleyweb/bun-common": "3.0.0-rc.0",
+    "@kingsleyweb/bun-jobs": "3.0.0-rc.0",
+    "@kingsleyweb/bun-jobs-ui": "3.0.0-rc.0",
+    "@kingsleyweb/bun-nest": "3.0.0-rc.0",
+    "@nestjs/common": "^12.3.3",
+    "@nestjs/core": "^12.3.3",
+    "@nestjs/throttler": "^6.7.1",
+    "phone": "^3.1.72",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@kingsleyweb/bun-client": "3.0.0-rc.0",
+    "@types/bun": "^1.4.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

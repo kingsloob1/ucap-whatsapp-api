@@ -1,0 +1,16 @@
+node_modules
+dist
+data
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+.git
+.github
+coverage
+test
+Dockerfile
+.dockerignore
+CLAUDE.md
