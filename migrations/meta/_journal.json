@@ -8,6 +8,13 @@
       "when": 1793800912643,
       "tag": "20261104140152_initial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793817857748,
+      "tag": "20261104184417_conversation_event_payloads",
+      "breakpoints": true
     }
   ]
 }

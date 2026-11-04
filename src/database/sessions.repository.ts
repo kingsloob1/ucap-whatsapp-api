@@ -1,7 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { SQL } from "bun";
 import { APP_DB } from "./database";
+import type { OutboundMessage } from "../whatsapp/whatsapp.interface";
 import type {
+  ConversationEntry,
   Exchange,
   ListSessionsQuery,
   SessionEvent,
@@ -83,14 +85,95 @@ export class SessionsRepository {
             ended_at = ${ended ? nowIso : null}, end_reason = ${ended ? "closed" : null}
           WHERE wa_id = ${x.waId}`;
       }
+      const messageId = x.messageId ?? null;
+      const inPayload = JSON.stringify({
+        text: inText,
+        choiceId: x.input.choiceId ?? null,
+      });
       await tx`
-        INSERT INTO conversation_events (wa_id, source, direction, step_before, step_after, text, choice_id, kind, at)
-        VALUES (${x.waId}, ${x.source}, 'in', ${x.stepBefore}, ${x.stepAfter}, ${inText}, ${x.input.choiceId ?? null}, 'text', ${nowIso})`;
-      for (const reply of x.replies) {
+        INSERT INTO conversation_events
+          (wa_id, source, direction, step_before, step_after, text, choice_id, kind, message_id, payload, at)
+        VALUES (${x.waId}, ${x.source}, 'in', ${x.stepBefore}, ${x.stepAfter}, ${inText}, ${x.input.choiceId ?? null},
+                'text', ${messageId}, ${inPayload}, ${nowIso})`;
+      // Replies are delivered by the outbound job (markDelivered); without a
+      // message id (the direct /dev/simulate path) they are answered at once.
+      const deliveredAt = messageId ? null : nowIso;
+      for (const [index, reply] of x.replies.entries()) {
         await tx`
-          INSERT INTO conversation_events (wa_id, source, direction, step_before, step_after, text, kind, at)
-          VALUES (${x.waId}, ${x.source}, 'out', ${x.stepBefore}, ${x.stepAfter}, ${reply.body}, ${reply.kind}, ${nowIso})`;
+          INSERT INTO conversation_events
+            (wa_id, source, direction, step_before, step_after, text, kind, message_id, reply_index, payload, delivered_at, at)
+          VALUES (${x.waId}, ${x.source}, 'out', ${x.stepBefore}, ${x.stepAfter}, ${reply.body}, ${reply.kind},
+                  ${messageId}, ${index}, ${JSON.stringify(reply)}, ${deliveredAt}, ${nowIso})`;
       }
+    });
+  }
+
+  /** Marks a reply delivered: sent to WhatsApp, or handed to the simulator. */
+  async markDelivered(messageId: string, replyIndex: number): Promise<void> {
+    const now = new Date().toISOString();
+    await this.sql`
+      UPDATE conversation_events SET delivered_at = ${now}
+      WHERE message_id = ${messageId} AND direction = 'out' AND reply_index = ${replyIndex} AND delivered_at IS NULL`;
+  }
+
+  /**
+   * A conversation as the simulator shows it, oldest first: the user's messages
+   * (as stored, so PINs and BVNs redacted) and the replies already delivered.
+   * `afterId` answers only newer entries.
+   */
+  async conversation(
+    waId: string,
+    afterId = 0,
+    limit = 500,
+  ): Promise<ConversationEntry[]> {
+    const rows: {
+      id: number;
+      direction: "in" | "out";
+      at: string;
+      message_id: string | null;
+      reply_index: number | null;
+      payload: string | null;
+      text: string | null;
+      choice_id: string | null;
+      kind: string | null;
+      delivered_at: string | null;
+    }[] = await this.sql`
+      SELECT id, direction, at, message_id, reply_index, payload, text, choice_id, kind, delivered_at
+      FROM conversation_events
+      WHERE wa_id = ${waId} AND id > ${afterId} AND (direction = 'in' OR delivered_at IS NOT NULL)
+      ORDER BY id LIMIT ${limit}`;
+    return rows.map((r): ConversationEntry => {
+      if (r.direction === "in") {
+        return {
+          id: Number(r.id),
+          direction: "in",
+          at: r.at,
+          messageId: r.message_id,
+          text: r.text ?? "",
+          choiceId: r.choice_id,
+        };
+      }
+      // Rows written before payloads existed hold the body only: shown as text.
+      const message: OutboundMessage = r.payload
+        ? (JSON.parse(r.payload) as OutboundMessage)
+        : { kind: "text", body: r.text ?? "" };
+      return {
+        id: Number(r.id),
+        direction: "out",
+        at: r.at,
+        messageId: r.message_id,
+        replyIndex: Number(r.reply_index ?? 0),
+        deliveredAt: r.delivered_at!,
+        message,
+      };
+    });
+  }
+
+  /** Forgets a number's conversation: its messages and its session record. */
+  async deleteConversation(waId: string): Promise<void> {
+    await this.sql.begin(async (tx) => {
+      await tx`DELETE FROM conversation_events WHERE wa_id = ${waId}`;
+      await tx`DELETE FROM conversation_sessions WHERE wa_id = ${waId}`;
     });
   }
 

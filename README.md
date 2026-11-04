@@ -126,8 +126,11 @@ flowchart LR
    than 429 fails the job for good.
 4. One user's messages are handled one at a time, in order; different users are handled concurrently.
 
-The chat simulator calls the state machine directly (`POST /dev/simulate`),
-skipping the queues, so its replies come back in the response.
+The chat simulator goes through the same queues (`POST /dev/messages`): its
+messages are queued like webhook deliveries, and the outbound job delivers their
+replies to the simulator instead of WhatsApp, so they are never sent to a real
+number. (`POST /dev/simulate` still runs the state machine directly, for
+scripts and tests.)
 
 ---
 
@@ -214,25 +217,27 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 
 ## HTTP endpoints
 
-| Method and path                        | Auth                       | Throttle                | What                                                                                                             |
-| -------------------------------------- | -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                                            |
-| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                                                  |
-| `GET /health`                          |                            | 120/min                 | Status and the server's date and time ([example](#endpoint-examples))                                            |
-| `GET /admin`                           |                            |                         | The admin UI (from source with hot reload in development, otherwise the built one)                               |
-| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                                             |
-| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                                                  |
-| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                                              |
-| `GET /admin/api/sessions`              | cookie                     | 120/min                 | Conversations, filtered by `source`, `status` and `search`, paged by `page` and `pageSize`                       |
-| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                                              |
-| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                                                            |
-| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                                                 |
-| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                                                            |
-| `POST /dev/simulate`                   | dev only                   | 60/min                  | Send one message as a WhatsApp user ([example](#endpoint-examples))                                              |
-| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test user and their session                                                                            |
-| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                                            |
-| `GET /chat`                            | dev only                   |                         | The chat simulator (from source with hot reload in development, otherwise the built one); `GET /` redirects here |
-| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                                            |
+| Method and path                        | Auth                       | Throttle                | What                                                                                                                 |
+| -------------------------------------- | -------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                                                |
+| `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                                                      |
+| `GET /health`                          |                            | 120/min                 | Status and the server's date and time ([example](#endpoint-examples))                                                |
+| `GET /admin`                           |                            |                         | The admin UI (from source with hot reload in development, otherwise the built one)                                   |
+| `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                                                 |
+| `POST /admin/api/logout`               | cookie                     | 120/min                 |                                                                                                                      |
+| `GET /admin/api/me`                    | cookie                     | 120/min                 | The signed-in admin                                                                                                  |
+| `GET /admin/api/sessions`              | cookie                     | 120/min                 | Conversations, filtered by `source`, `status` and `search`, paged by `page` and `pageSize`                           |
+| `GET /admin/api/sessions/:waId`        | cookie                     | 120/min                 | Live state (secrets redacted), account, message log                                                                  |
+| `POST /admin/api/sessions/:waId/reset` | cookie                     | 120/min                 | Ends the conversation                                                                                                |
+| `GET /admin/jobs/`                     | cookie                     | 120/min                 | The bun-jobs-ui dashboard (redirects to sign-in)                                                                     |
+| `/admin/jobs-api/*`                    | cookie                     | 300/min                 | The bun-jobs management API (+ live-events WebSocket)                                                                |
+| `POST /dev/messages`                   | dev only                   | 60/min                  | Send a message as a WhatsApp user through the queues (`202`; replies are delivered to the simulator, never WhatsApp) |
+| `GET /dev/conversations/:waId`         | dev only                   | 120/min                 | The stored conversation (`after`, and `wait` up to 8 s for news)                                                     |
+| `POST /dev/simulate`                   | dev only                   | 60/min                  | Send one message as a WhatsApp user ([example](#endpoint-examples))                                                  |
+| `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test number's account, session and stored conversation                                                     |
+| `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                                                |
+| `GET /chat`                            | dev only                   |                         | The chat simulator (from source with hot reload in development, otherwise the built one); `GET /` redirects here     |
+| `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                                                |
 
 Validation errors answer `400` with `{ statusCode, message: string[], error }`.
 
@@ -322,8 +327,22 @@ The simulator at <http://127.0.0.1:3000/chat> asks for a country and a mobile
 number. The `phone` package validates it as a real mobile number, both in the
 browser and again on the server. You then chat as that number: WhatsApp-style
 bubbles, reply buttons, list menus as a bottom sheet, and WhatsApp's
-`*bold*` / `_italic_` / ` ```mono``` ` formatting. History is kept per
-number in the browser. **Reset number** deletes the account so you can onboard again.
+`*bold*` / `_italic_` / ` ```mono``` ` formatting, and day dividers.
+
+- **The conversation lives on the server**, like a real WhatsApp chat. Enter
+  the same number on any device and the whole conversation comes back: your
+  messages, the bot's replies with their buttons and lists, and the current
+  step. Open on two devices at once, each shows the other's messages within
+  seconds; the page keeps one request waiting for news
+  (`GET /dev/conversations/:waId?after=…&wait=8`).
+- **Your messages are stored as the message log keeps them**: PINs as `••••`,
+  BVNs masked, so restored history shows those, never the real values.
+- **Ticks** work like WhatsApp's: a clock while sending, ✓ once the server
+  queued it, grey ✓✓ once the bot stored it, blue ✓✓ once it replied. Tap a
+  message for the exact date and time it was sent (and read).
+- **⋮ menu** (the header links on wider screens): **Clear chat** hides the
+  messages on this device only; **Reset number** deletes the account, the
+  session and the stored conversation; **Change number** switches number.
 
 Both UIs call the API through `@kingsleyweb/bun-client`, typed by
 `ui/src/api.gen.ts`:

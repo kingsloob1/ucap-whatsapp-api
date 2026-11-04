@@ -61,6 +61,50 @@ export const SimulateResponseDto = z.object({
   transcript: z.string(),
 });
 
+/** Accepted: the message is on the inbound queue, like a webhook delivery. */
+export const SendMessageResponseDto = z.object({
+  /** The simulated message's id (`sim.…`), which its replies and ticks refer to. */
+  messageId: z.string(),
+  /** When the server accepted it (ISO 8601, milliseconds). */
+  at: z.iso.datetime(),
+});
+
+export const ConversationParamsDto = z.object({ waId: WaIdDto });
+
+export const ConversationQueryDto = z.object({
+  /** Only entries newer than this id. */
+  after: z.coerce.number().int().min(0).default(0),
+  /** Seconds to wait for something new before answering (long polling); 0 answers at once. */
+  wait: z.coerce.number().int().min(0).max(8).default(0),
+});
+
+export const ConversationEntryDto = z.discriminatedUnion("direction", [
+  z.object({
+    id: z.number(),
+    direction: z.literal("in"),
+    at: z.string(),
+    messageId: z.string().nullable(),
+    /** As stored: PINs and BVNs redacted. */
+    text: z.string(),
+    choiceId: z.string().nullable(),
+  }),
+  z.object({
+    id: z.number(),
+    direction: z.literal("out"),
+    at: z.string(),
+    messageId: z.string().nullable(),
+    replyIndex: z.number(),
+    deliveredAt: z.string(),
+    message: OutboundMessageDto,
+  }),
+]);
+
+export const ConversationResponseDto = z.object({
+  /** The step the conversation is at; null when there is no live session. */
+  step: z.string().nullable(),
+  entries: z.array(ConversationEntryDto),
+});
+
 export const ResetParamsDto = z.object({ waId: WaIdDto });
 
 export const ResetResponseDto = z.object({ deletedUser: z.boolean() });

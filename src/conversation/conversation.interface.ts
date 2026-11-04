@@ -18,6 +18,12 @@ export interface MessageMeta {
   source: SessionSource;
   /** The business phone number id a WhatsApp message was sent to. */
   phoneNumberId?: string | null;
+  /**
+   * The inbound message's id, when it came through the queue (`wamid.…` or
+   * `sim.…`): its replies are then delivered by the outbound job. Without one
+   * (the direct /dev/simulate path) they count as delivered at once.
+   */
+  messageId?: string;
 }
 
 /** What one step answers: the session to store (`null` ends it) and the replies to send. */

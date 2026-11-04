@@ -306,15 +306,81 @@ button {
   max-width: min(80%, 460px);
 }
 
+.user-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: flex-end;
+  gap: 0.2rem;
+  max-width: min(80%, 460px);
+}
+
+.bubble__details {
+  padding: 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+/* WhatsApp's day chip, kept in view while its day scrolls past. */
+.day {
+  position: sticky;
+  top: 0.25rem;
+  z-index: 1;
+  align-self: center;
+  margin: 0.5rem 0;
+
+  & span {
+    display: inline-block;
+    padding: 0.3rem 0.75rem;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #54656f;
+    font-size: 0.75rem;
+    box-shadow: var(--shadow);
+  }
+}
+
+.ticks {
+  flex: none;
+  color: #8696a0;
+  vertical-align: middle;
+
+  &.ticks--read {
+    color: #53bdeb;
+  }
+
+  &.ticks--failed {
+    display: inline-grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--danger);
+    color: white;
+    font-size: 0.6rem;
+    font-weight: 700;
+  }
+}
+
 .bubble {
   position: relative;
+  display: block;
   max-width: min(80%, 460px);
   padding: 0.4rem 0.55rem 1.1rem;
+  border: 0;
   border-radius: var(--radius);
+  color: inherit;
+  font: inherit;
   font-size: 0.92rem;
   line-height: 1.38;
+  text-align: left;
   overflow-wrap: anywhere;
   box-shadow: var(--shadow);
+  cursor: pointer;
+
+  &.bubble--expanded {
+    filter: brightness(0.96);
+  }
 
   & code {
     font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -336,19 +402,19 @@ button {
     position: absolute;
     right: 0.5rem;
     bottom: 0.2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
     color: var(--muted);
     font-size: 0.68rem;
   }
 
   &.bubble--user {
     align-self: flex-end;
-    min-width: 5.5rem;
+    max-width: 100%;
+    min-width: 6rem;
     background: var(--bubble-user);
     border-top-right-radius: 0;
-
-    & .bubble__meta {
-      color: #53bdeb;
-    }
   }
 
   &.bubble--bot {
@@ -432,6 +498,8 @@ button {
     border: 0;
     border-radius: 999px;
     font: inherit;
+    /* 16px or more, or iOS zooms the page in when the box is tapped. */
+    font-size: 16px;
     outline: none;
   }
 
@@ -523,5 +591,94 @@ button {
 @keyframes rise {
   from {
     transform: translateY(30%);
+  }
+}
+
+/* ---------------------------------------------------------------- the ⋮ menu */
+
+.menu {
+  /* Wide screens show the actions inline; phones get this menu instead. */
+  display: none;
+  position: relative;
+
+  & .menu__button {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: white;
+
+    &:hover,
+    &[aria-expanded="true"] {
+      background: rgb(255 255 255 / 14%);
+    }
+  }
+
+  & .menu__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+  }
+
+  & .menu__popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    min-width: 190px;
+    padding: 0.4rem 0;
+    border-radius: 8px;
+    background: white;
+    box-shadow: 0 6px 20px rgb(11 20 26 / 22%);
+    animation: fade 0.12s ease-out;
+
+    & button {
+      padding: 0.75rem 1.2rem;
+      border: 0;
+      background: none;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.95rem;
+      text-align: left;
+
+      &:hover,
+      &:focus-visible {
+        background: #f5f6f6;
+        outline: none;
+      }
+    }
+  }
+}
+
+@media (width <= 640px) {
+  .chat__header {
+    gap: 0.6rem;
+    padding: 0.5rem 0.4rem 0.5rem 0.75rem;
+
+    & .chat__actions {
+      display: none;
+    }
+  }
+
+  .menu {
+    display: block;
+  }
+
+  .user-message,
+  .bot-message {
+    max-width: 88%;
+  }
+
+  .chat__messages {
+    padding: 0.6rem 0.6rem 0.75rem;
+  }
+
+  .composer {
+    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
   }
 }

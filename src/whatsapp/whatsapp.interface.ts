@@ -1,3 +1,4 @@
+import type { SessionSource } from "../database/sessions.interface";
 import type {
   MessageBaseDto,
   VerifyQueryDto,
@@ -76,4 +77,6 @@ export interface InboundMessage {
   /** Unix seconds, as Meta sends it. */
   timestamp: number;
   input: InboundInput;
+  /** Where it came from: a WhatsApp webhook (the default) or the chat simulator. */
+  source?: SessionSource;
 }
