@@ -22,7 +22,11 @@ import {
   PermanentSendError,
   WhatsAppClient,
 } from "../whatsapp/whatsapp.client";
-import type { InboundMessage } from "../whatsapp/whatsapp.interface";
+import { text } from "../whatsapp/messages";
+import type {
+  InboundMessage,
+  OutboundMessage,
+} from "../whatsapp/whatsapp.interface";
 import type { OutboundJob } from "./queue.interface";
 
 export const JOBS_NAMESPACE = "investnow";
@@ -138,13 +142,12 @@ export class QueueService
           const toWhatsApp = (job.data.source ?? "whatsapp") === "whatsapp";
           for (; sent < job.data.messages.length; sent++) {
             try {
-              if (toWhatsApp) {
-                await this.whatsapp.send(
+              if (toWhatsApp)
+                await this.sendOrFallBack(
                   job.data.to,
                   job.data.messages[sent]!,
                   ctx.signal,
                 );
-              }
               await this.log.markDelivered(job.data.inReplyTo, sent);
             } catch (error) {
               if (error instanceof PermanentSendError) {
@@ -177,6 +180,28 @@ export class QueueService
 
     this.workers.push(inboundWorker as never, outboundWorker as never);
     for (const worker of this.workers) void worker.run();
+  }
+
+  /**
+   * Sends one message. A form (Flow) WhatsApp refuses for good, as it does
+   * while the business isn't verified (`139000 Blocked by Integrity`), is
+   * replaced by its text fallback, which offers the chat steps instead.
+   */
+  private async sendOrFallBack(
+    to: string,
+    message: OutboundMessage,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await this.whatsapp.send(to, message, signal);
+    } catch (error) {
+      if (!(error instanceof PermanentSendError) || message.kind !== "flow")
+        throw error;
+      this.logger.warn(
+        `The ${message.flow} form to ${to} was refused (${error.message}): sending the chat steps instead`,
+      );
+      await this.whatsapp.send(to, text(message.fallback), signal);
+    }
   }
 
   /** Queues inbound messages; ones already queued (a webhook redelivery) are dropped. Answers how many were new. */

@@ -1285,8 +1285,9 @@ function flowMessage(
   token: string,
   body: string,
   cta: string,
+  fallback: string,
 ): OutboundMessage {
-  return { kind: "flow", flow, token, body, cta };
+  return { kind: "flow", flow, token, body, cta, fallback };
 }
 
 function onboardingFlowMessage(token: string, lead: string): OutboundMessage {
@@ -1298,6 +1299,8 @@ function onboardingFlowMessage(token: string, lead: string): OutboundMessage {
       "and you can review and change it before your account is created.\n\n" +
       TYPE_INSTEAD,
     "Open form",
+    `${lead}\n\nReply *TYPE* to answer a few questions here in the chat: your BVN, ` +
+      "date of birth, the products you're interested in, and a PIN.",
   );
 }
 
@@ -1322,6 +1325,7 @@ function transactionFlowMessage(
     `Tap *${TRANSACTION_CTA[type]}* to ${what}, then approve it with your PIN.\n\n` +
       `${TYPE_INSTEAD} Or reply MENU to go back.`,
     TRANSACTION_CTA[type],
+    `Reply *TYPE* to ${what} here in the chat, or MENU to go back.`,
   );
 }
 
@@ -1331,5 +1335,6 @@ function pinFlowMessage(action: PendingAction, token: string): OutboundMessage {
     token,
     `*${actionSummary(action)}*\n\nTap *Enter PIN* to approve. Can't open it? Reply with your 4-digit PIN instead, or CANCEL.`,
     "Enter PIN",
+    `*${actionSummary(action)}*\n\nPlease enter your 4-digit PIN to approve, or reply CANCEL.`,
   );
 }

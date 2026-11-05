@@ -437,6 +437,7 @@ describe("the WhatsApp Flow endpoint", () => {
         token: "tok",
         body: "Tap",
         cta: "Open form",
+        fallback: "Reply TYPE",
       },
       {
         ids: { onboarding: "111", pin: "222", transaction: "333" },

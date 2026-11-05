@@ -62,6 +62,8 @@ export const OutboundMessageDto = z.discriminatedUnion("kind", [
     flow: z.enum(["onboarding", "pin", "transaction"]),
     /** What the form's requests to `POST /dev/flows/exchange` carry. */
     token: z.string(),
+    /** The text sent instead when WhatsApp refuses the form. */
+    fallback: z.string(),
   }),
 ]);
 
