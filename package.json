@@ -21,7 +21,8 @@
     "db:generate": "drizzle-kit generate",
     "db:status": "bun scripts/db.ts status",
     "db:migrate": "bun scripts/db.ts migrate",
-    "db:check": "bun scripts/db.ts check"
+    "db:check": "bun scripts/db.ts check",
+    "flows": "bun scripts/flows.ts"
   },
   "dependencies": {
     "@kingsleyweb/bun-cache": "3.0.0-rc.0",

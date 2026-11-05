@@ -99,9 +99,9 @@ describe("onboarding", () => {
 
     expect((await say(waId, "22233344455")).step).toBe("ask_dob");
 
-    r = await say(waId, "01/01/2015");
+    r = await say(waId, "01/01/2023");
     expect(r.step).toBe("ask_dob");
-    expect(r.body).toContain("at least 18");
+    expect(r.body).toContain("at least 5");
 
     r = await say(waId, "25/12/1990");
     expect(r.step).toBe("select_products");
@@ -137,7 +137,7 @@ describe("onboarding", () => {
     r = await say(waId, tap("review:confirm", "Confirm & create"));
     expect(r.step).toBe("menu");
     expect(r.replies.map((m) => m.kind)).toEqual(["text", "list"]);
-    expect(r.body).toContain("*******4455");
+    expect(r.body).toContain("BVN: •••••••4455");
   });
 
   test("the user is saved permanently, with a hashed PIN and their products", async () => {
@@ -181,7 +181,7 @@ describe("editing onboarding answers before the account is created", () => {
   async function toReview() {
     await say(waId, "hi");
     await say(waId, tap("onboard:proceed"));
-    await say(waId, "44455566677");
+    await say(waId, "22244556677");
     await say(waId, "01/02/1985");
     await say(waId, "2");
     await say(waId, "4826");
@@ -216,7 +216,7 @@ describe("editing onboarding answers before the account is created", () => {
     expect(r.step).toBe("edit_bvn");
     expect(r.body).toContain("already linked");
 
-    r = await say(waId, "55566677788");
+    r = await say(waId, "22255667788");
     expect(r.step).toBe("review");
     expect(r.body).toContain("BVN updated");
     expect(r.body).toContain("BVN: •••••••7788");
@@ -224,7 +224,7 @@ describe("editing onboarding answers before the account is created", () => {
 
   test("date of birth and products, typed with the numbers instead of tapping", async () => {
     expect((await say(waId, "3")).step).toBe("edit_dob");
-    expect((await say(waId, "01/01/2015")).body).toContain("at least 18");
+    expect((await say(waId, "01/01/2023")).body).toContain("at least 5");
     let r = await say(waId, "15/06/1992");
     expect(r.step).toBe("review");
     expect(r.body).toContain("Date of birth: 15/06/1992");
@@ -270,7 +270,7 @@ describe("editing onboarding answers before the account is created", () => {
     expect(r.step).toBe("menu");
     const user = (await users.findByWaId(waId))!;
     expect(user).toMatchObject({
-      bvn: "55566677788",
+      bvn: "22255667788",
       dateOfBirth: "1992-06-15",
     });
     expect(await Bun.password.verify("5917", user.pinHash)).toBe(true);
@@ -284,7 +284,7 @@ describe("menu actions", () => {
   const waId = "2348000000003";
 
   beforeAll(async () => {
-    expect((await onboard(waId, "11122233344")).step).toBe("menu");
+    expect((await onboard(waId, "22211122233")).step).toBe("menu");
   });
 
   test("withdraw and buy with an empty wallet send the user back to the menu", async () => {
@@ -369,7 +369,7 @@ test("one user's messages are handled in order, even when they arrive together",
   const results = await Promise.all([
     say(waId, "hi"),
     say(waId, tap("onboard:proceed")),
-    say(waId, "33344455566"),
+    say(waId, "22234455566"),
   ]);
   expect(results.map((r) => r.replies[0]?.body.slice(0, 20))).toEqual([
     expect.stringContaining("Welcome"),

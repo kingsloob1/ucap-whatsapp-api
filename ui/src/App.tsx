@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { checkMobile, countryOptions } from "../../src/shared/phone";
 import { api } from "./api";
 import { WhatsAppText, time } from "./format";
+import { FlowSheet } from "./FlowSheet";
 import type { CountryCode } from "../../src/shared/phone.interface";
 import type {
   ConversationEntry,
@@ -10,6 +11,7 @@ import type {
 
 type Outbound = SimulateResponse["replies"][number];
 type ListMessage = Extract<Outbound, { kind: "list" }>;
+type FlowMessage = Extract<Outbound, { kind: "flow" }>;
 
 interface Identity {
   waId: string;
@@ -184,6 +186,8 @@ type Row =
       at: string;
       ticks: Ticks;
       readAt?: string;
+      /** Answered in a form (a WhatsApp Flow), not typed in the chat. */
+      form?: boolean;
     }
   | { key: string; kind: "bot"; message: Outbound; at: string };
 
@@ -241,10 +245,13 @@ function buildRows(
   const items: Exclude<Row, { kind: "day" }>[] = [];
   visible.forEach((e, i) => {
     if (e.direction === "in") {
-      // Entries without an id (the direct /dev/simulate path) count as read once anything follows them.
-      const readAt = e.messageId
-        ? replyAt.get(e.messageId)
-        : visible.slice(i + 1).find((x) => x.direction === "out")?.at;
+      // Entries without an id (the direct /dev/simulate path) count as read
+      // once anything follows them; a form's answers as soon as they're stored.
+      const readAt = e.form
+        ? e.at
+        : e.messageId
+          ? replyAt.get(e.messageId)
+          : visible.slice(i + 1).find((x) => x.direction === "out")?.at;
       items.push({
         key: `in:${e.id}`,
         kind: "user",
@@ -252,6 +259,7 @@ function buildRows(
         at: e.at,
         ticks: readAt ? "read" : "delivered",
         ...(readAt ? { readAt } : {}),
+        ...(e.form ? { form: true } : {}),
       });
     } else {
       items.push({
@@ -300,6 +308,7 @@ function Chat({
   const [offline, setOffline] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sheet, setSheet] = useState<ListMessage | null>(null);
+  const [form, setForm] = useState<FlowMessage | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [clearedUpTo, setClearedUpTo] = useState(() =>
@@ -589,6 +598,7 @@ function Chat({
               }
               onChoose={send}
               onOpenList={setSheet}
+              onOpenForm={setForm}
             />
           ),
         )}
@@ -631,6 +641,15 @@ function Chat({
         </button>
       </form>
 
+      {form && (
+        <FlowSheet
+          key={form.token}
+          flow={form.flow}
+          token={form.token}
+          cta={form.cta}
+          onClose={() => setForm(null)}
+        />
+      )}
       {sheet && (
         <ListSheet
           message={sheet}
@@ -730,12 +749,14 @@ function Bubble({
   onToggle,
   onChoose,
   onOpenList,
+  onOpenForm,
 }: {
   row: Exclude<Row, { kind: "day" }>;
   expanded: boolean;
   onToggle: () => void;
   onChoose: (text: string, choiceId?: string) => void;
   onOpenList: (message: ListMessage) => void;
+  onOpenForm: (message: FlowMessage) => void;
 }) {
   const at = time(new Date(row.at));
   if (row.kind === "user") {
@@ -746,6 +767,7 @@ function Bubble({
           className={`bubble bubble--user ${expanded ? "bubble--expanded" : ""}`}
           onClick={onToggle}
         >
+          {row.form && <span className="bubble__form">📝 Form answer</span>}
           <WhatsAppText text={row.text} />
           <span className="bubble__meta">
             {at} <TickIcon ticks={row.ticks} />
@@ -804,6 +826,17 @@ function Bubble({
             onClick={() => onOpenList(message)}
           >
             ☰ {message.button}
+          </button>
+        </div>
+      )}
+      {message.kind === "flow" && (
+        <div className="replies">
+          <button
+            type="button"
+            className="replies__button"
+            onClick={() => onOpenForm(message)}
+          >
+            📝 {message.cta}
           </button>
         </div>
       )}

@@ -15,6 +15,8 @@ export async function testApp(
     ENABLE_DEV_ROUTES: "true",
     WHATSAPP_APP_SECRET: APP_SECRET,
     WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
+    // The chat steps; test/flows.test.ts turns the Flows on.
+    SIMULATOR_FLOWS: "false",
     ...overrides,
   });
   const app = await createApp(config, { quiet: true, uiSource: false });

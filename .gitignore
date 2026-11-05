@@ -7,3 +7,6 @@ data/
 .env
 .env.local
 coverage
+
+# WhatsApp Flow endpoint keys (bun run flows keys): the private key is a secret
+.flow-keys/

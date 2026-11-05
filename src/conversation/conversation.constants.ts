@@ -14,3 +14,8 @@ export const INVESTNOW_USSD = "*7277#";
 export const ussd = (code: string) => "```" + code + "```";
 
 export const sessionKey = (waId: string) => `session:${waId}` as const;
+
+export const flowKey = (token: string) => `flow:${token}` as const;
+
+/** Wrong PINs before a pending request is cancelled. */
+export const MAX_PIN_ATTEMPTS = 3;

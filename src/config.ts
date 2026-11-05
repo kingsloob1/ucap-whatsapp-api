@@ -64,8 +64,28 @@ export function loadConfig(
       ),
       graphApiVersion: env.WHATSAPP_GRAPH_API_VERSION?.trim() || "v26.0",
       dryRun: accessToken === "" || phoneNumberId === "",
+      flows: {
+        privateKey: env.WHATSAPP_FLOW_PRIVATE_KEY?.trim() ?? "",
+        privateKeyPassphrase: env.WHATSAPP_FLOW_PRIVATE_KEY_PASSPHRASE ?? "",
+        ids: {
+          onboarding: env.WHATSAPP_FLOW_ID_ONBOARDING?.trim() ?? "",
+          pin: env.WHATSAPP_FLOW_ID_PIN?.trim() ?? "",
+          transaction: env.WHATSAPP_FLOW_ID_TRANSACTION?.trim() ?? "",
+        },
+        mode:
+          env.WHATSAPP_FLOW_MODE?.trim().toLowerCase() === "draft"
+            ? "draft"
+            : "published",
+      },
     },
+    simulatorFlows: bool(env.SIMULATOR_FLOWS, true),
   };
+
+  const { flows } = config.whatsapp;
+  if (Object.values(flows.ids).some(Boolean) && flows.privateKey === "")
+    throw new Error(
+      "WHATSAPP_FLOW_PRIVATE_KEY is required when a WHATSAPP_FLOW_ID_* is set",
+    );
 
   if (production) {
     const missing = (

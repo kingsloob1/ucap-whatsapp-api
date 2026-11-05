@@ -51,6 +51,10 @@ export interface Exchange {
   ttlMs: number;
   /** The inbound message's id; without one, the replies are recorded as delivered at once. */
   messageId?: string;
+  /** The input text is already masked (a Flow answer): stored as given. */
+  masked?: boolean;
+  /** The event's kind: `text` for a chat message, `flow` for an answer given in a Flow. */
+  inKind?: "text" | "flow";
 }
 
 /** One message of a conversation, as the simulator shows it. */
@@ -62,6 +66,8 @@ export type ConversationEntry =
       messageId: string | null;
       text: string;
       choiceId: string | null;
+      /** Given in a WhatsApp Flow (a form), not typed in the chat. */
+      form: boolean;
     }
   | {
       id: number;

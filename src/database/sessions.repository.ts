@@ -61,11 +61,12 @@ export class SessionsRepository {
     const name = x.profileName ?? null;
     const phoneNumberId = x.phoneNumberId ?? null;
     const redact = x.stepBefore ? REDACT[x.stepBefore] : undefined;
-    const inText = x.input.choiceId
-      ? x.input.text
-      : redact
-        ? redact(x.input.text)
-        : x.input.text;
+    const inText =
+      x.input.choiceId || x.masked
+        ? x.input.text
+        : redact
+          ? redact(x.input.text)
+          : x.input.text;
 
     await this.sql.begin(async (tx) => {
       if (x.stepBefore === null) {
@@ -99,7 +100,7 @@ export class SessionsRepository {
         INSERT INTO conversation_events
           (wa_id, source, direction, step_before, step_after, text, choice_id, kind, message_id, payload, at)
         VALUES (${x.waId}, ${x.source}, 'in', ${x.stepBefore}, ${x.stepAfter}, ${inText}, ${x.input.choiceId ?? null},
-                'text', ${messageId}, ${inPayload}, ${nowIso})`;
+                ${x.inKind ?? "text"}, ${messageId}, ${inPayload}, ${nowIso})`;
       // Replies are delivered by the outbound job (markDelivered); without a
       // message id (the direct /dev/simulate path) they are answered at once.
       const deliveredAt = messageId ? null : nowIso;
@@ -156,6 +157,7 @@ export class SessionsRepository {
           messageId: r.message_id,
           text: r.text ?? "",
           choiceId: r.choice_id,
+          form: r.kind === "flow",
         };
       }
       // Rows written before payloads existed hold the body only: shown as text.

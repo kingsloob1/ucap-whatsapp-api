@@ -21,6 +21,8 @@ import {
   WebhookSignatureGuard,
 } from "./whatsapp/webhook.controller";
 import { WhatsAppClient } from "./whatsapp/whatsapp.client";
+import { FlowExchangeService } from "./flows/flow-exchange.service";
+import { FlowsController } from "./flows/flows.controller";
 
 @Controller()
 @Describe({ tags: ["health"] })
@@ -82,9 +84,15 @@ export class AppModule {
       controllers: [
         HealthController,
         WebhookController,
+        FlowsController,
         ...(config.enableDevRoutes ? [DevController] : []),
       ],
-      providers: [WhatsAppClient, QueueService, WebhookSignatureGuard],
+      providers: [
+        WhatsAppClient,
+        QueueService,
+        WebhookSignatureGuard,
+        FlowExchangeService,
+      ],
     };
   }
 }

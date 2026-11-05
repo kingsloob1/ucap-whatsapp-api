@@ -28,6 +28,15 @@ export const InteractiveMessageDto = z.looseObject({
   ]),
 });
 
+/**
+ * What WhatsApp sends when a Flow (form) is finished. Our Flows are served by
+ * the endpoint, which already handled every answer, so these are dropped.
+ */
+export const FlowReplyMessageDto = z.looseObject({
+  type: z.literal("interactive"),
+  interactive: z.looseObject({ type: z.literal("nfm_reply") }),
+});
+
 /** A tap on a template's quick-reply button. */
 export const ButtonMessageDto = z.looseObject({
   type: z.literal("button"),

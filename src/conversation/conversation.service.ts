@@ -12,7 +12,6 @@ import { buttons, list, text } from "../whatsapp/messages";
 import { KeyedMutex } from "./keyed-mutex";
 import {
   formatNaira,
-  maskBvn,
   parseAmount,
   parseBvn,
   parseDateOfBirth,
@@ -22,11 +21,16 @@ import {
 import { PRODUCTS, productByCode, productTitle } from "./products";
 import {
   BVN_USSD,
+  flowKey,
   INVESTNOW_USSD,
+  MAX_PIN_ATTEMPTS,
   SESSION_CACHE,
   sessionKey,
   ussd,
 } from "./conversation.constants";
+import { actionSummary, formatDob, hideBvn, productsText } from "./format";
+import type { SessionSource } from "../database/sessions.interface";
+import type { FlowName, FlowRef } from "../flows/flows.interface";
 import type { User } from "../database/users.interface";
 import type {
   InboundInput,
@@ -41,6 +45,7 @@ import type {
   PendingAction,
   Session,
   SessionCacheSchema,
+  TransactionType,
   Transition,
 } from "./conversation.interface";
 
@@ -63,7 +68,8 @@ const GREETINGS = new Set([
   "good afternoon",
   "good evening",
 ]);
-const MAX_PIN_ATTEMPTS = 3;
+/** What a user replies to answer a Flow's questions in the chat instead. */
+const TYPE_WORDS = new Set(["type", "chat", "type it", "text"]);
 
 const CHOICE = {
   proceed: "onboard:proceed",
@@ -135,6 +141,33 @@ export class ConversationService {
     });
   }
 
+  /** What a Flow token points at, while its form may still be used. */
+  flowRef(token: string): Promise<FlowRef | undefined> {
+    return this.sessions.get(flowKey(token));
+  }
+
+  /** Stores a session changed by the Flow endpoint; call it inside {@link exclusive}. */
+  async saveSession(waId: string, session: Session): Promise<void> {
+    await this.sessions.set(sessionKey(waId), session, {
+      ttl: this.config.sessionTtlMs,
+    });
+  }
+
+  /** Runs `task` while no message of `waId`'s is being handled (the Flow endpoint updates sessions under it too). */
+  exclusive<T>(waId: string, task: () => Promise<T>): Promise<T> {
+    return this.mutex.run(waId, task);
+  }
+
+  /**
+   * Whether a Flow is offered instead of the chat steps: on WhatsApp once Meta
+   * has its id and the endpoint its key, in the simulator unless turned off.
+   */
+  flowsOn(flow: FlowName, source: SessionSource): boolean {
+    if (source === "simulator") return this.config.simulatorFlows;
+    const { flows } = this.config.whatsapp;
+    return flows.privateKey !== "" && flows.ids[flow] !== "";
+  }
+
   private async process(
     contact: Contact,
     input: InboundInput,
@@ -146,7 +179,13 @@ export class ConversationService {
       this.users.findByWaId(contact.waId),
     ]);
     const answer = (input.choiceId ?? input.text).trim().toLowerCase();
-    const ctx: Context = { contact, user, input, answer };
+    const ctx: Context = {
+      contact,
+      user,
+      input,
+      answer,
+      source: meta.source,
+    };
 
     const { next, replies } = await this.transition(session, ctx);
     if (next)
@@ -166,6 +205,8 @@ export class ConversationService {
       replies,
       ttlMs: this.config.sessionTtlMs,
       ...(meta.messageId ? { messageId: meta.messageId } : {}),
+      // A finished Flow's last answer, already masked by the endpoint.
+      ...(input.flowToken ? { masked: true, inKind: "flow" as const } : {}),
     });
     return replies;
   }
@@ -176,6 +217,7 @@ export class ConversationService {
   ): Promise<Transition> {
     const { answer, user } = ctx;
 
+    if (ctx.input.flowToken) return this.flowFinished(session, ctx);
     if (CLOSE_WORDS.has(answer) || answer === CHOICE.close) return this.close();
     if (!session || GREETINGS.has(answer)) return this.welcome(ctx);
     if (answer === "menu")
@@ -196,6 +238,8 @@ export class ConversationService {
     switch (session.step) {
       case "onboarding_prompt":
         return this.onboardingPrompt(ctx);
+      case "onboarding_flow":
+        return this.onboardingFlow(session, ctx);
       case "ask_bvn":
         return this.askBvn(ctx);
       case "ask_dob":
@@ -224,6 +268,8 @@ export class ConversationService {
         return this.buyProduct(user!, ctx);
       case "buy_amount":
         return this.buyAmount(session, user!, ctx);
+      case "transaction":
+        return this.transaction(session, user!, ctx);
       case "authorize":
         return this.authorize(session, user!, ctx);
     }
@@ -269,11 +315,21 @@ export class ConversationService {
 
   /* --------------------------------------------------------- onboarding */
 
-  private onboardingPrompt({ answer }: Context): Transition {
+  private async onboardingPrompt(ctx: Context): Promise<Transition> {
+    const { answer } = ctx;
     if (
       answer === CHOICE.proceed ||
       ["proceed", "yes", "y", "ok", "okay", "1"].includes(answer)
     ) {
+      if (this.flowsOn("onboarding", ctx.source)) {
+        const token = await this.newFlowToken("onboarding", ctx);
+        return {
+          next: { step: "onboarding_flow", flowToken: token, draft: {} },
+          replies: [
+            onboardingFlowMessage(token, "Great, let's get you set up! 🚀"),
+          ],
+        };
+      }
       return {
         next: { step: "ask_bvn" },
         replies: [
@@ -297,6 +353,87 @@ export class ConversationService {
         ),
       ],
     };
+  }
+
+  /** A message while the onboarding form is open: TYPE switches to the chat steps; anything else shows the form again. */
+  private onboardingFlow(
+    session: Extract<Session, { step: "onboarding_flow" }>,
+    { answer }: Context,
+  ): Transition {
+    if (TYPE_WORDS.has(answer)) {
+      void this.sessions.delete(flowKey(session.flowToken));
+      return {
+        next: { step: "ask_bvn" },
+        replies: [
+          text(
+            "No problem, let's do it here in the chat.\n\n" +
+              bvnPrompt("*Step 1 of 4*\nPlease enter"),
+          ),
+        ],
+      };
+    }
+    return {
+      next: session,
+      replies: [
+        onboardingFlowMessage(
+          session.flowToken,
+          "Your account form is still waiting for you.",
+        ),
+      ],
+    };
+  }
+
+  /**
+   * The message the Flow endpoint queues when a form is finished, its token in
+   * the input: creates the account, or carries out the approved request. A
+   * token that isn't the session's (an old form) is ignored.
+   */
+  private async flowFinished(
+    session: Session | undefined,
+    ctx: Context,
+  ): Promise<Transition> {
+    const token = ctx.input.flowToken!;
+    if (!session || !("flowToken" in session) || session.flowToken !== token)
+      return { next: session ?? null, replies: [] };
+
+    if (session.step === "onboarding_flow") {
+      if (!session.submitted || !isCompleteDraft(session.draft))
+        return { next: session, replies: [] };
+      await this.sessions.delete(flowKey(token));
+      return this.createAccount(session.draft, ctx.contact);
+    }
+    if (!ctx.user) return this.welcome(ctx);
+    if (session.approved && session.action) {
+      await this.sessions.delete(flowKey(token));
+      return this.menu("Anything else?", [
+        await this.execute(session.action, ctx.user),
+      ]);
+    }
+    if (session.attempts >= MAX_PIN_ATTEMPTS) {
+      await this.sessions.delete(flowKey(token));
+      return this.menu("What would you like to do?", [
+        text(
+          "❌ Too many incorrect PIN attempts, so this request was cancelled.",
+        ),
+      ]);
+    }
+    return { next: session, replies: [] };
+  }
+
+  /** A new Flow token, pointing at this conversation, valid as long as a session. */
+  private async newFlowToken(flow: FlowName, ctx: Context): Promise<string> {
+    const token = crypto.randomUUID().replaceAll("-", "");
+    await this.sessions.set(
+      flowKey(token),
+      {
+        flow,
+        waId: ctx.contact.waId,
+        source: ctx.source,
+        ...(ctx.contact.name ? { profileName: ctx.contact.name } : {}),
+      },
+      { ttl: this.config.sessionTtlMs },
+    );
+    return token;
   }
 
   private async askBvn({ input }: Context): Promise<Transition> {
@@ -387,7 +524,7 @@ export class ConversationService {
 
   /** Shows every answer, with a row to confirm and one to change each of them. */
   private showReview(draft: OnboardingDraft, lead: string): Transition {
-    const products = draft.productCodes.map(productTitle).join(", ");
+    const products = productsText(draft.productCodes);
     return {
       next: { step: "review", draft },
       replies: [
@@ -480,7 +617,7 @@ export class ConversationService {
           replies: [
             text(
               productsPrompt(
-                `*Edit products*\nCurrent: ${draft.productCodes.map(productTitle).join(", ")}\n\nWhich products are`,
+                `*Edit products*\nCurrent: ${productsText(draft.productCodes)}\n\nWhich products are`,
               ) + keep,
             ),
           ],
@@ -610,8 +747,8 @@ export class ConversationService {
       replies: [
         text(
           `🎉 Your InvestNow account is ready, ${firstName(user.name ?? undefined)}!\n\n` +
-            `BVN: ${maskBvn(user.bvn)}\n` +
-            `Products: ${draft.productCodes.map(productTitle).join(", ")}\n\n` +
+            `BVN: ${hideBvn(user.bvn)}\n` +
+            `Products: ${productsText(draft.productCodes)}\n\n` +
             "Fund your wallet to start investing.",
         ),
         ...menu.replies,
@@ -620,7 +757,7 @@ export class ConversationService {
   }
 
   /** A well-formed BVN that isn't registered yet. */
-  private async checkBvn(input: string): Promise<Parsed<string>> {
+  async checkBvn(input: string): Promise<Parsed<string>> {
     const bvn = parseBvn(input);
     if (!bvn.ok) return bvn;
     if (await this.users.isBvnRegistered(bvn.value))
@@ -676,10 +813,8 @@ export class ConversationService {
     };
   }
 
-  private async menuChoice(
-    user: User,
-    { answer }: Context,
-  ): Promise<Transition> {
+  private async menuChoice(user: User, ctx: Context): Promise<Transition> {
+    const { answer } = ctx;
     const choice = matchChoice(answer, [
       [CHOICE.fund, ["1", "fund", "fund wallet"]],
       [CHOICE.balance, ["2", "balance", "check balance"]],
@@ -689,42 +824,18 @@ export class ConversationService {
     ]);
 
     switch (choice) {
-      case CHOICE.fund: {
-        const wallet = await this.users.walletBalance(user.id);
-        return {
-          next: { step: "fund_amount" },
-          replies: [
-            text(
-              `How much would you like to add to your wallet? Send the amount in naira, e.g. 5000.\n\nWallet balance: ${formatNaira(wallet)}`,
-            ),
-          ],
-        };
-      }
+      case CHOICE.fund:
+        return this.startTransaction("fund", user, ctx);
       case CHOICE.balance:
         return this.askPin(
+          ctx,
           { type: "balance" },
           "Please enter your 4-digit PIN to view your balances.",
         );
-      case CHOICE.withdraw: {
-        const wallet = await this.users.walletBalance(user.id);
-        if (wallet === 0)
-          return this.menu(
-            "Your wallet is empty, so there's nothing to withdraw yet.",
-          );
-        return {
-          next: { step: "withdraw_amount" },
-          replies: [
-            text(
-              `How much would you like to withdraw? Available: ${formatNaira(wallet)}`,
-            ),
-          ],
-        };
-      }
+      case CHOICE.withdraw:
+        return this.startTransaction("withdraw", user, ctx);
       case CHOICE.buy:
-        return {
-          next: { step: "buy_product" },
-          replies: [productPicker(await this.ownedProducts(user.id))],
-        };
+        return this.startTransaction("buy", user, ctx);
       case CHOICE.close:
         return this.close();
       default:
@@ -736,21 +847,96 @@ export class ConversationService {
 
   /* ------------------------------------------------------------ actions */
 
-  private fundAmount({ input }: Context): Transition {
-    const amount = parseAmount(input.text);
+  /** Fund, withdraw or buy: in the transaction Flow when it's on, or step by step in the chat. */
+  private async startTransaction(
+    type: TransactionType,
+    user: User,
+    ctx: Context,
+  ): Promise<Transition> {
+    if (!this.flowsOn("transaction", ctx.source))
+      return this.startInChat(type, user);
+    const wallet = await this.users.walletBalance(user.id);
+    if (type === "withdraw" && wallet === 0)
+      return this.menu(
+        "Your wallet is empty, so there's nothing to withdraw yet.",
+      );
+    if (type === "buy" && wallet === 0)
+      return this.menu(
+        "Your wallet balance is ₦0.00. Please fund your wallet first, then buy the product.",
+      );
+    const token = await this.newFlowToken("transaction", ctx);
+    return {
+      next: { step: "transaction", type, flowToken: token, attempts: 0 },
+      replies: [transactionFlowMessage(type, token)],
+    };
+  }
+
+  /** The chat steps for a transaction: the amount (and product) typed or tapped, then the PIN. */
+  private async startInChat(
+    type: TransactionType,
+    user: User,
+  ): Promise<Transition> {
+    if (type === "buy")
+      return {
+        next: { step: "buy_product" },
+        replies: [productPicker(await this.ownedProducts(user.id))],
+      };
+    const wallet = await this.users.walletBalance(user.id);
+    if (type === "fund")
+      return {
+        next: { step: "fund_amount" },
+        replies: [
+          text(
+            `How much would you like to add to your wallet? Send the amount in naira, e.g. 5000.\n\nWallet balance: ${formatNaira(wallet)}`,
+          ),
+        ],
+      };
+    if (wallet === 0)
+      return this.menu(
+        "Your wallet is empty, so there's nothing to withdraw yet.",
+      );
+    return {
+      next: { step: "withdraw_amount" },
+      replies: [
+        text(
+          `How much would you like to withdraw? Available: ${formatNaira(wallet)}`,
+        ),
+      ],
+    };
+  }
+
+  /** A message while the transaction form is open: TYPE switches to the chat steps; anything else shows the form again. */
+  private async transaction(
+    session: Extract<Session, { step: "transaction" }>,
+    user: User,
+    { answer }: Context,
+  ): Promise<Transition> {
+    if (TYPE_WORDS.has(answer)) {
+      await this.sessions.delete(flowKey(session.flowToken));
+      return this.startInChat(session.type, user);
+    }
+    return {
+      next: session,
+      replies: [transactionFlowMessage(session.type, session.flowToken)],
+    };
+  }
+
+  private fundAmount(ctx: Context): Promise<Transition> {
+    const amount = parseAmount(ctx.input.text);
     if (!amount.ok)
-      return { next: { step: "fund_amount" }, replies: [text(amount.error)] };
+      return Promise.resolve({
+        next: { step: "fund_amount" },
+        replies: [text(amount.error)],
+      });
     return this.askPin(
+      ctx,
       { type: "fund", amountKobo: amount.value },
       `Fund your wallet with *${formatNaira(amount.value)}*.\n\nEnter your 4-digit PIN to approve, or reply CANCEL.`,
     );
   }
 
-  private async withdrawAmount(
-    user: User,
-    { input }: Context,
-  ): Promise<Transition> {
-    const amount = parseAmount(input.text);
+  private async withdrawAmount(user: User, ctx: Context): Promise<Transition> {
+    const amount = parseAmount(ctx.input.text);
     if (!amount.ok)
       return {
         next: { step: "withdraw_amount" },
@@ -768,6 +954,7 @@ export class ConversationService {
       };
     }
     return this.askPin(
+      ctx,
       { type: "withdraw", amountKobo: amount.value },
       `Withdraw *${formatNaira(amount.value)}* to your bank account.\n\nEnter your 4-digit PIN to approve, or reply CANCEL.`,
     );
@@ -808,9 +995,9 @@ export class ConversationService {
   private async buyAmount(
     session: Extract<Session, { step: "buy_amount" }>,
     user: User,
-    { input }: Context,
+    ctx: Context,
   ): Promise<Transition> {
-    const amount = parseAmount(input.text);
+    const amount = parseAmount(ctx.input.text);
     if (!amount.ok) return { next: session, replies: [text(amount.error)] };
     const wallet = await this.users.walletBalance(user.id);
     if (amount.value > wallet) {
@@ -824,6 +1011,7 @@ export class ConversationService {
       };
     }
     return this.askPin(
+      ctx,
       {
         type: "buy",
         productCode: session.productCode,
@@ -834,7 +1022,19 @@ export class ConversationService {
     );
   }
 
-  private askPin(action: PendingAction, prompt: string): Transition {
+  /** Asks for the PIN that approves `action`: in the PIN Flow when it's on, or typed in the chat. */
+  private async askPin(
+    ctx: Context,
+    action: PendingAction,
+    prompt: string,
+  ): Promise<Transition> {
+    if (this.flowsOn("pin", ctx.source)) {
+      const token = await this.newFlowToken("pin", ctx);
+      return {
+        next: { step: "authorize", action, attempts: 0, flowToken: token },
+        replies: [pinFlowMessage(action, token)],
+      };
+    }
     return {
       next: { step: "authorize", action, attempts: 0 },
       replies: [text(prompt)],
@@ -959,6 +1159,7 @@ export class ConversationService {
 function isOnboardedStep(session: Session): boolean {
   switch (session.step) {
     case "onboarding_prompt":
+    case "onboarding_flow":
     case "ask_bvn":
     case "ask_dob":
     case "select_products":
@@ -1046,17 +1247,6 @@ async function confirmNewPin(
   return (await Bun.password.verify(pin, pinHash)) ? "ok" : "mismatch";
 }
 
-/** The BVN with all but its last 4 digits as dots: no asterisks to pair up as WhatsApp bold. */
-function hideBvn(bvn: string): string {
-  return `${"•".repeat(Math.max(0, bvn.length - 4))}${bvn.slice(-4)}`;
-}
-
-/** An ISO date as DD/MM/YYYY. */
-function formatDob(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  return `${day}/${month}/${year}`;
-}
-
 function productPicker(
   owned: Set<string>,
   body = "Which product would you like to buy?",
@@ -1073,4 +1263,73 @@ function productPicker(
       })),
     },
   ]);
+}
+
+/** Whether every onboarding answer is in. */
+function isCompleteDraft(
+  draft: Partial<OnboardingDraft>,
+): draft is OnboardingDraft {
+  return Boolean(
+    draft.bvn &&
+    draft.dateOfBirth &&
+    draft.productCodes?.length &&
+    draft.pinHash,
+  );
+}
+
+const TYPE_INSTEAD =
+  "Can't open the form? Reply *TYPE* to answer here in the chat instead.";
+
+function flowMessage(
+  flow: FlowName,
+  token: string,
+  body: string,
+  cta: string,
+): OutboundMessage {
+  return { kind: "flow", flow, token, body, cta };
+}
+
+function onboardingFlowMessage(token: string, lead: string): OutboundMessage {
+  return flowMessage(
+    "onboarding",
+    token,
+    `${lead}\n\nTap *Open form* to enter your BVN, date of birth, products and PIN. ` +
+      "What you enter in the form is sent securely and isn't shown in this chat, " +
+      "and you can review and change it before your account is created.\n\n" +
+      TYPE_INSTEAD,
+    "Open form",
+  );
+}
+
+const TRANSACTION_CTA: Record<TransactionType, string> = {
+  fund: "Fund wallet",
+  withdraw: "Withdraw",
+  buy: "Buy a product",
+};
+
+function transactionFlowMessage(
+  type: TransactionType,
+  token: string,
+): OutboundMessage {
+  const what = {
+    fund: "enter how much to add to your wallet",
+    withdraw: "enter how much to withdraw to your bank account",
+    buy: "choose a product and how much to invest",
+  }[type];
+  return flowMessage(
+    "transaction",
+    token,
+    `Tap *${TRANSACTION_CTA[type]}* to ${what}, then approve it with your PIN.\n\n` +
+      `${TYPE_INSTEAD} Or reply MENU to go back.`,
+    TRANSACTION_CTA[type],
+  );
+}
+
+function pinFlowMessage(action: PendingAction, token: string): OutboundMessage {
+  return flowMessage(
+    "pin",
+    token,
+    `*${actionSummary(action)}*\n\nTap *Enter PIN* to approve. Can't open it? Reply with your 4-digit PIN instead, or CANCEL.`,
+    "Enter PIN",
+  );
 }

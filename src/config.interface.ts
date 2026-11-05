@@ -1,3 +1,5 @@
+import type { FlowName } from "./flows/flows.interface";
+
 /** Everything the service reads from the environment, read once at startup. */
 export interface AppConfig {
   port: number;
@@ -35,5 +37,16 @@ export interface AppConfig {
     graphApiVersion: string;
     /** True when there is no token or phone number id: replies are logged, not sent. */
     dryRun: boolean;
+    flows: {
+      /** The RSA private key (PEM) the Flow endpoint decrypts with; its public key is uploaded to Meta. */
+      privateKey: string;
+      privateKeyPassphrase: string;
+      /** Each Flow's id on Meta; a Flow without one isn't offered on WhatsApp (the chat steps are used). */
+      ids: Record<FlowName, string>;
+      /** `draft` sends Flows that aren't published yet (testing); `published` otherwise. */
+      mode: "published" | "draft";
+    };
   };
+  /** Offer the Flows in the chat simulator (rendered by the page, no Meta setup needed). */
+  simulatorFlows: boolean;
 }

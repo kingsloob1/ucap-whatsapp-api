@@ -4,11 +4,15 @@
  * body 1024 chars, at most 3 reply buttons of 20 chars, list button 20 chars,
  * at most 10 rows in total, row titles 24 chars, row descriptions 72 chars.
  */
+import type { AppConfig } from "../config";
 import type {
   ListSection,
   OutboundMessage,
   ReplyButton,
 } from "./whatsapp.interface";
+
+/** What sending a Flow needs: each Flow's id on Meta, and whether drafts are sent. */
+export type FlowSettings = Pick<AppConfig["whatsapp"]["flows"], "ids" | "mode">;
 
 export const text = (body: string): OutboundMessage => ({ kind: "text", body });
 
@@ -47,6 +51,7 @@ function clip(value: string, max: number): string {
 export function toGraphPayload(
   to: string,
   message: OutboundMessage,
+  flows?: FlowSettings,
 ): Record<string, unknown> {
   const base = {
     messaging_product: "whatsapp",
@@ -109,6 +114,36 @@ export function toGraphPayload(
           },
         },
       };
+    case "flow": {
+      const flowId = flows?.ids[message.flow];
+      if (!flowId) throw new Error(`The ${message.flow} Flow has no id`);
+      return {
+        ...base,
+        type: "interactive",
+        interactive: {
+          type: "flow",
+          ...(message.header
+            ? { header: { type: "text", text: clip(message.header, 60) } }
+            : {}),
+          body: { text: clip(message.body, 1024) },
+          ...(message.footer
+            ? { footer: { text: clip(message.footer, 60) } }
+            : {}),
+          action: {
+            name: "flow",
+            parameters: {
+              flow_message_version: "3",
+              flow_token: message.token,
+              flow_id: flowId,
+              flow_cta: clip(message.cta, 20),
+              // The endpoint answers INIT with the first screen.
+              flow_action: "data_exchange",
+              ...(flows.mode === "draft" ? { mode: "draft" } : {}),
+            },
+          },
+        },
+      };
+    }
   }
 }
 
@@ -123,6 +158,10 @@ export function toPlainText(message: OutboundMessage): string {
         ...message.buttons.map((b) => `  [${b.title}]  (${b.id})`),
         message.footer ?? "",
       ]
+        .filter(Boolean)
+        .join("\n");
+    case "flow":
+      return [message.body, `  [${message.cta}]  (${message.flow} form)`]
         .filter(Boolean)
         .join("\n");
     case "list":
