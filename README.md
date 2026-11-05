@@ -357,6 +357,9 @@ defined in `src/flows/definitions.ts`:
   message (`nfm_reply`) is dropped, since the endpoint already has everything.
 - On the review screen, the back arrow returns to any screen. A changed answer
   goes straight back to the review once everything is filled in.
+- If WhatsApp refuses a form for good (for example `139000 Blocked by Integrity`
+  while the business isn't verified), the outbound worker sends the form's text
+  fallback instead, which offers the chat steps (`TYPE`, or a typed PIN).
 - Each form has a token kept with the session (`flow:<token>` in sessions.db).
   The form stops working when the request finishes, the user types `TYPE`, or the
   session expires.
@@ -669,22 +672,23 @@ drizzle.config.ts        drizzle-kit settings (model, output folder, timestamp p
 
 ## Troubleshooting
 
-| Symptom                                                        | Likely cause                                                                                              |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`                  |
-| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                                |
-| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev           |
-| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines         |
-| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`          |
-| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                                   |
-| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                          |
-| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                                    |
-| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                                  |
-| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration              |
-| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                             |
-| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                            |
-| A form says it can't be opened, or the Flow health check fails | The public key isn't uploaded (`bun run flows upload-key`), or `WHATSAPP_FLOW_PRIVATE_KEY` isn't its pair |
-| A form shows "no longer available"                             | `427`: a newer form was sent, the request finished, or the session expired; open the latest one           |
+| Symptom                                                        | Likely cause                                                                                                            |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`                                |
+| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                                              |
+| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev                         |
+| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines                       |
+| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`                        |
+| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                                                 |
+| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                                        |
+| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                                                  |
+| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                                                |
+| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration                            |
+| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                                           |
+| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                                          |
+| A form says it can't be opened, or the Flow health check fails | The public key isn't uploaded (`bun run flows upload-key`), or `WHATSAPP_FLOW_PRIVATE_KEY` isn't its pair               |
+| `WARN … form … was refused (… 139000 Blocked by Integrity)`    | Meta blocks Flow messages until the business is verified and its profile complete; the bot sends the chat steps instead |
+| A form shows "no longer available"                             | `427`: a newer form was sent, the request finished, or the session expired; open the latest one                         |
 
 ---
 

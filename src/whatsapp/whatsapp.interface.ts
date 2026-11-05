@@ -54,6 +54,11 @@ export type OutboundMessage =
       flow: FlowName;
       /** Ties the form's requests to this conversation (`flow:<token>` in the session cache). */
       token: string;
+      /**
+       * Sent as a text instead when WhatsApp refuses the form (e.g. `139000
+       * Blocked by Integrity` for an unverified business): the chat steps.
+       */
+      fallback: string;
     };
 
 /** What the state machine reads from an inbound message. */
