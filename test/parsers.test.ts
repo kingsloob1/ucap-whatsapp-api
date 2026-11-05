@@ -18,12 +18,18 @@ describe("parseBvn", () => {
       value: "22233344455",
     });
   });
-  test.each(["1234", "123456789012", "2223334445a", ""])(
-    "rejects %p",
-    (input) => {
-      expect(parseBvn(input).ok).toBe(false);
-    },
-  );
+  test.each([
+    ["1234", "11 digits"],
+    ["223456789012", "11 digits"],
+    ["2223334445a", "digits only"],
+    ["", "11 digits"],
+    ["12345678901", "starts with 22"],
+    ["22222222222", "isn't a valid BVN"],
+  ])("rejects %p", (input, why) => {
+    const result = parseBvn(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain(why);
+  });
 });
 
 describe("parseDateOfBirth", () => {
@@ -38,10 +44,14 @@ describe("parseDateOfBirth", () => {
   test("rejects a date that doesn't exist", () => {
     expect(parseDateOfBirth("31/02/1990", NOW).ok).toBe(false);
   });
-  test("rejects the future and under-18s, accepts an 18th birthday", () => {
+  test("rejects the future and under-5s, accepts a 5th birthday", () => {
     expect(parseDateOfBirth("01/01/2030", NOW).ok).toBe(false);
-    expect(parseDateOfBirth("05/11/2008", NOW).ok).toBe(false);
-    expect(parseDateOfBirth("04/11/2008", NOW).ok).toBe(true);
+    expect(parseDateOfBirth("05/11/2021", NOW).ok).toBe(false);
+    expect(parseDateOfBirth("04/11/2021", NOW).ok).toBe(true);
+  });
+  test("rejects anyone over 120", () => {
+    expect(parseDateOfBirth("03/11/1905", NOW).ok).toBe(false);
+    expect(parseDateOfBirth("04/11/1906", NOW).ok).toBe(true);
   });
   test("rejects other formats", () => {
     expect(parseDateOfBirth("December 25 1990", NOW).ok).toBe(false);
@@ -67,12 +77,24 @@ describe("parseNewPin", () => {
   test("accepts an ordinary PIN", () => {
     expect(parseNewPin(" 4826 ")).toEqual({ ok: true, value: "4826" });
   });
-  test.each(["123", "12345", "abcd", "0000", "1234", "6789", "4321"])(
-    "rejects %p",
-    (pin) => {
-      expect(parseNewPin(pin).ok).toBe(false);
-    },
-  );
+  test.each([
+    "123",
+    "12345",
+    "abcd",
+    "0000",
+    "1234",
+    "6789",
+    "4321",
+    "1212",
+    "4848",
+  ])("rejects %p", (pin) => {
+    expect(parseNewPin(pin).ok).toBe(false);
+  });
+  test("rejects the birth year and the day and month", () => {
+    for (const pin of ["1990", "2512", "1225"])
+      expect(parseNewPin(pin, "1990-12-25").ok).toBe(false);
+    expect(parseNewPin("4826", "1990-12-25").ok).toBe(true);
+  });
 });
 
 describe("parseAmount", () => {

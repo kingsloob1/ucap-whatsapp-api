@@ -1,5 +1,6 @@
 import {
   ButtonMessageDto,
+  FlowReplyMessageDto,
   InteractiveMessageDto,
   TextMessageDto,
 } from "./webhook.dto";
@@ -42,6 +43,7 @@ export function extractMessages(payload: WebhookPayload): InboundMessage[] {
         (change.value.contacts ?? []).map((c) => [c.wa_id, c.profile?.name]),
       );
       for (const message of change.value.messages ?? []) {
+        if (FlowReplyMessageDto.safeParse(message).success) continue;
         const name = names.get(message.from);
         out.push({
           messageId: message.id,

@@ -58,7 +58,9 @@ export class WhatsAppClient {
           authorization: `Bearer ${accessToken}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify(toGraphPayload(to, message)),
+        body: JSON.stringify(
+          toGraphPayload(to, message, this.config.whatsapp.flows),
+        ),
         signal: signal ?? AbortSignal.timeout(15_000),
       },
     );

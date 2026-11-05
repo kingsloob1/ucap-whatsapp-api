@@ -4,6 +4,10 @@ import {
   ConversationQueryDto,
   ConversationResponseDto,
   ErrorResponseDto,
+  FlowDefinitionDto,
+  FlowExchangeBodyDto,
+  FlowExchangeResponseDto,
+  FlowNameParamsDto,
   HealthResponseDto,
   OutboxResponseDto,
   ResetParamsDto,
@@ -48,6 +52,19 @@ export const schemas = {
     responses: { 200: ResetResponseDto, 400: ErrorResponseDto },
   },
   "GET /dev/outbox": { responses: { 200: OutboxResponseDto } },
+  "GET /dev/flows/:name": {
+    params: FlowNameParamsDto,
+    responses: { 200: FlowDefinitionDto, 400: ErrorResponseDto },
+  },
+  "POST /dev/flows/exchange": {
+    body: FlowExchangeBodyDto,
+    responses: {
+      200: FlowExchangeResponseDto,
+      400: ErrorResponseDto,
+      410: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  },
   "GET /health": { responses: { 200: HealthResponseDto } },
 } satisfies SchemaSource<Routes>["schemas"];
 

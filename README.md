@@ -26,6 +26,7 @@ It ships with:
 - [Configuration](#configuration)
 - [HTTP endpoints](#http-endpoints)
 - [Connecting WhatsApp](#connecting-whatsapp)
+- [WhatsApp Flows (forms)](#whatsapp-flows-forms)
 - [Admin area](#admin-area)
 - [Chat simulator and the live typed client](#chat-simulator-and-the-live-typed-client)
 - [Security](#security)
@@ -141,10 +142,13 @@ stateDiagram-v2
   [*] --> Welcome
   Welcome --> OnboardingPrompt: not onboarded
   Welcome --> Menu: onboarded
-  OnboardingPrompt --> AskBVN: Proceed
+  OnboardingPrompt --> OnboardingForm: Proceed (Flows on)
+  OnboardingPrompt --> AskBVN: Proceed (chat steps)
   OnboardingPrompt --> [*]: Close
-  AskBVN --> AskDOB: 11 digits, not registered
-  AskDOB --> SelectProducts: DD/MM/YYYY, 18+
+  OnboardingForm --> Menu: form done, saved to investnow.db
+  OnboardingForm --> AskBVN: TYPE
+  AskBVN --> AskDOB: 11 digits from 22, not registered
+  AskDOB --> SelectProducts: DD/MM/YYYY, 5 to 120
   SelectProducts --> SetPIN: e.g. 1,3,5 or all
   SetPIN --> ConfirmPIN: 4 digits, not 1111/1234
   ConfirmPIN --> SetPIN: mismatch
@@ -152,25 +156,35 @@ stateDiagram-v2
   Review --> EditAnswer: Edit BVN, date of birth, products or PIN
   EditAnswer --> Review: new value, or BACK
   Review --> Menu: Confirm, saved to investnow.db
-  Menu --> FundAmount: Fund wallet
-  Menu --> WithdrawAmount: Withdraw
-  Menu --> BuyProduct: Buy products
+  Menu --> TransactionForm: Fund, Withdraw or Buy (Flows on)
+  TransactionForm --> Menu: amount and PIN ok, or 3 wrong PINs
+  TransactionForm --> FundAmount: TYPE
+  Menu --> FundAmount: Fund wallet (chat steps)
+  Menu --> WithdrawAmount: Withdraw (chat steps)
+  Menu --> BuyProduct: Buy products (chat steps)
   Menu --> Authorize: Check balance
   FundAmount --> Authorize
   WithdrawAmount --> Authorize
   BuyProduct --> BuyAmount
   BuyAmount --> Authorize
-  Authorize --> Menu: PIN ok, or 3 wrong PINs
+  Authorize --> Menu: PIN ok (form or typed), or 3 wrong PINs
 ```
 
 - **Welcome:** a new user gets **Proceed** and **Close** buttons; an onboarded user gets the menu.
   New users, and anyone whose session closes, are also told about InvestNow's USSD service, `*7277#`.
+- **Forms first:** where the [Flows](#whatsapp-flows-forms) are set up, onboarding, fund/withdraw/buy
+  and PIN approvals open a WhatsApp form instead of the chat steps below, so BVNs and PINs are never
+  typed into the chat. Replying `TYPE` uses the chat steps instead, and a typed PIN is still accepted.
 - **Onboarding:**
-  - **BVN**: 11 digits, not already registered. The prompt tells users who don't know it to dial `*565*0#`.
-  - **Date of birth**: `DD/MM/YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY` or `YYYY-MM-DD`; the user must be at least 18.
+  - **BVN**: 11 digits starting with `22` (as every BVN does), not one digit repeated, not already
+    registered. The prompt tells users who don't know it to dial `*565*0#`.
+  - **Date of birth**: `DD/MM/YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY` or `YYYY-MM-DD`; a real date, not in
+    the future, and the user must be between 5 and 120 years old.
   - **Products**: Money Market Fund, Fixed Income Fund, Balanced Fund, Equity
     Fund, Stocks and Trustees. Several can be chosen as `1,3,5`, `1 3 5`, `1, 3 and 5` or `all`.
-  - **PIN**: 4 digits, with repeated digits and sequences refused, then confirmed.
+  - **PIN**: 4 digits, then confirmed. A new PIN can't be one digit repeated (`1111`), a sequence
+    (`1234`, `4321`), a repeated pair (`1212`), or the user's birth year, day and month, or month and
+    day. Approving a request only checks that the PIN is 4 digits and matches.
     It is stored only as an argon2id hash (`Bun.password`), including while it is being confirmed.
   - **Review**: before anything is saved, a list shows the BVN (masked), date of birth, products and
     PIN (hidden), with **Confirm & create** and a row to change each answer (or reply `1`–`5`).
@@ -195,26 +209,31 @@ its way to your bank account"). Each transaction gets a reference and a row in
 
 Everything is read from the environment (Bun loads `.env` automatically). See `.env.example`.
 
-| Variable                                          | Default                                       | Meaning                                                                                                                                                             |
-| ------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                                            | `3000`                                        | HTTP port                                                                                                                                                           |
-| `HOST`                                            | `0.0.0.0`                                     | Bind address                                                                                                                                                        |
-| `NODE_ENV`                                        |                                               | `production` turns on the production checks below                                                                                                                   |
-| `TRUSTED_PROXIES`                                 | `0`                                           | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer                                                                      |
-| `CLIENT_IP_HEADER`                                |                                               | A header holding the client's address, set by a proxy that overwrites it on every request: `x-real-ip` on Railway. Wins over `TRUSTED_PROXIES` when it holds one IP |
-| `DATA_DIR`                                        | `./data`                                      | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)                                                                              |
-| `SESSION_TTL_MS`                                  | `86400000` (24 h)                             | Idle time before a conversation resets                                                                                                                              |
-| `MIGRATE_ON_START`                                | on outside production; on in the Docker image | Apply pending migrations at startup. Off: a pending migration refuses the start                                                                                     |
-| `ENABLE_DEV_ROUTES`                               | on outside production                         | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production                                                                              |
-| `WHATSAPP_VERIFY_TOKEN`                           |                                               | The token Meta echoes when you register the webhook                                                                                                                 |
-| `WHATSAPP_APP_SECRET`                             |                                               | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)                                                                          |
-| `WHATSAPP_ACCESS_TOKEN`                           |                                               | Graph API token. Unset: dry-run                                                                                                                                     |
-| `WHATSAPP_PHONE_NUMBER_ID`                        |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run                                                                             |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID`                    |                                               | Deliveries for any other business account are ignored. Unset: any                                                                                                   |
-| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                 | `86400`                                       | Older messages are dropped as stale or replayed                                                                                                                     |
-| `WHATSAPP_GRAPH_API_VERSION`                      | `v26.0`                                       | Graph API version replies are sent with (`v26.0` is the newest as of November 2026)                                                                                 |
-| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` |                                               | When all three are set, this admin is created at startup (or has its password reset)                                                                                |
-| `ADMIN_SESSION_TTL_MS`                            | `28800000` (8 h)                              | How long an admin stays signed in                                                                                                                                   |
+| Variable                                              | Default                                       | Meaning                                                                                                                                                             |
+| ----------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                                                | `3000`                                        | HTTP port                                                                                                                                                           |
+| `HOST`                                                | `0.0.0.0`                                     | Bind address                                                                                                                                                        |
+| `NODE_ENV`                                            |                                               | `production` turns on the production checks below                                                                                                                   |
+| `TRUSTED_PROXIES`                                     | `0`                                           | Reverse-proxy hops whose `X-Forwarded-For` is trusted for client IPs. `0` uses the socket peer                                                                      |
+| `CLIENT_IP_HEADER`                                    |                                               | A header holding the client's address, set by a proxy that overwrites it on every request: `x-real-ip` on Railway. Wins over `TRUSTED_PROXIES` when it holds one IP |
+| `DATA_DIR`                                            | `./data`                                      | Where the SQLite files live (`:memory:` keeps everything in-process; the tests use it)                                                                              |
+| `SESSION_TTL_MS`                                      | `86400000` (24 h)                             | Idle time before a conversation resets                                                                                                                              |
+| `MIGRATE_ON_START`                                    | on outside production; on in the Docker image | Apply pending migrations at startup. Off: a pending migration refuses the start                                                                                     |
+| `ENABLE_DEV_ROUTES`                                   | on outside production                         | The simulator API, the chat UI at `/chat` and the dev type sync. Refused in production                                                                              |
+| `WHATSAPP_VERIFY_TOKEN`                               |                                               | The token Meta echoes when you register the webhook                                                                                                                 |
+| `WHATSAPP_APP_SECRET`                                 |                                               | Signs every delivery (`X-Hub-Signature-256`). Unset: signatures **not** checked (dev only)                                                                          |
+| `WHATSAPP_ACCESS_TOKEN`                               |                                               | Graph API token. Unset: dry-run                                                                                                                                     |
+| `WHATSAPP_PHONE_NUMBER_ID`                            |                                               | The business number replies are sent from, which deliveries must be for. Unset: dry-run                                                                             |
+| `WHATSAPP_BUSINESS_ACCOUNT_ID`                        |                                               | Deliveries for any other business account are ignored. Unset: any                                                                                                   |
+| `WEBHOOK_MAX_MESSAGE_AGE_SECONDS`                     | `86400`                                       | Older messages are dropped as stale or replayed                                                                                                                     |
+| `WHATSAPP_GRAPH_API_VERSION`                          | `v26.0`                                       | Graph API version replies are sent with (`v26.0` is the newest as of November 2026)                                                                                 |
+| `WHATSAPP_FLOW_PRIVATE_KEY`                           |                                               | The Flow endpoint's RSA private key (PEM; literal `\n` line breaks work). Required with any `WHATSAPP_FLOW_ID_*`. A secret                                          |
+| `WHATSAPP_FLOW_PRIVATE_KEY_PASSPHRASE`                |                                               | The key's passphrase, if it has one                                                                                                                                 |
+| `WHATSAPP_FLOW_ID_ONBOARDING`, `_PIN`, `_TRANSACTION` |                                               | Each Flow's id on Meta (`bun run flows sync` prints them). A Flow without one isn't offered on WhatsApp                                                             |
+| `WHATSAPP_FLOW_MODE`                                  | `published`                                   | `draft` sends Flows that aren't published yet, for testing                                                                                                          |
+| `SIMULATOR_FLOWS`                                     | on                                            | Offer the forms in the chat simulator, which renders them itself                                                                                                    |
+| `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`     |                                               | When all three are set, this admin is created at startup (or has its password reset)                                                                                |
+| `ADMIN_SESSION_TTL_MS`                                | `28800000` (8 h)                              | How long an admin stays signed in                                                                                                                                   |
 
 **In production** (`NODE_ENV=production`) the service refuses to start without
 `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and
@@ -228,6 +247,7 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 | -------------------------------------- | -------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `GET /webhook`                         | verify token               | none                    | Meta's verification handshake: echoes `hub.challenge`                                                                |
 | `POST /webhook`                        | signature                  | none                    | Deliveries (messages, statuses)                                                                                      |
+| `POST /flows`                          | signature + encryption     | none                    | The WhatsApp Flow endpoint: each form screen's answers ([Flows](#whatsapp-flows-forms))                              |
 | `GET /health`                          |                            | 120/min                 | Status and the server's date and time ([example](#endpoint-examples))                                                |
 | `GET /admin`                           |                            |                         | The admin UI (from source with hot reload in development, otherwise the built one)                                   |
 | `POST /admin/api/login`                |                            | 10/min, then 15 min out | `{ identifier, password }` → sets the session cookie                                                                 |
@@ -243,6 +263,8 @@ Everything is read from the environment (Bun loads `.env` automatically). See `.
 | `POST /dev/simulate`                   | dev only                   | 60/min                  | Send one message as a WhatsApp user ([example](#endpoint-examples))                                                  |
 | `DELETE /dev/users/:waId`              | dev only                   | 10/min                  | Deletes a test number's account, session and stored conversation                                                     |
 | `GET /dev/outbox`                      | dev only                   | 120/min                 | What dry-run recorded                                                                                                |
+| `GET /dev/flows/:name`                 | dev only                   | 120/min                 | A Flow's Flow JSON (`onboarding`, `pin`, `transaction`), rendered by the simulator                                   |
+| `POST /dev/flows/exchange`             | dev only                   | 120/min                 | A simulator form's request to the Flow endpoint's logic, unencrypted; simulator conversations only                   |
 | `GET /chat`                            | dev only                   |                         | The chat simulator (from source with hot reload in development, otherwise the built one); `GET /` redirects here     |
 | `/__bun/types/*`                       | dev only, loopback + token |                         | The live type sync (`DevTypesModule`)                                                                                |
 
@@ -294,8 +316,67 @@ answers `{ "step": "ask_bvn", "replies": [ … ], "transcript": "…" }`. `from`
 5. Message the business number. The reply arrives through the outbound queue,
    which you can watch at `/admin/jobs`.
 
-Interactive messages used: reply buttons (up to 3) and lists (up to 10 rows).
-Product multi-select is a numbered text reply, since WhatsApp lists are single-select.
+Interactive messages used: reply buttons (up to 3), lists (up to 10 rows) and
+Flows. In the chat steps, product multi-select is a numbered text reply, since
+WhatsApp lists are single-select; the onboarding form has checkboxes.
+
+---
+
+## WhatsApp Flows (forms)
+
+Three [WhatsApp Flows](https://developers.facebook.com/docs/whatsapp/flows),
+defined in `src/flows/definitions.ts`:
+
+| Flow          | Screens                                                                                                | Opened by                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `onboarding`  | BVN (masked) → date of birth (date picker) → products (checkboxes) → PIN and confirm (masked) → review | **Proceed** for a new user                                   |
+| `transaction` | amount (and the product, for Buy) → PIN (masked)                                                       | **Fund wallet**, **Withdraw**, **Buy**                       |
+| `pin`         | PIN (masked)                                                                                           | **Check balance**, and a PIN after amounts typed in the chat |
+
+**How it works:**
+
+- Every screen is served by the Flow endpoint, `POST /flows`
+  (`src/flows/flows.controller.ts`). WhatsApp encrypts each request to our
+  public key (RSA-OAEP with SHA-256, then AES-128-GCM) and signs it with the app
+  secret. The endpoint answers `432` to a bad signature, `421` to a request it
+  can't decrypt (so WhatsApp refetches the key), and `427` to a form that is no
+  longer open.
+- Each answer is checked on the server (`src/flows/flow-exchange.service.ts`)
+  with the same rules as the chat steps, and a refusal is shown in the form on
+  that field. Inputs marked `password` are masked as they are typed and are
+  listed as `sensitive`, so WhatsApp masks them in its summary too.
+- **History:** each answer is logged in the conversation as the user's message,
+  masked, and shown as a "form answer" in the simulator and the admin view:
+  `BVN: •••••••4455` (all but the last 4 digits), `Date of birth: 25/12/1990`,
+  `Products: Money Market Fund, Stocks`, `Amount: ₦50,000.00`, `PIN: ••••`.
+  A refused answer is followed by the error the form showed.
+- When the last screen is done, the form closes and the endpoint queues the
+  final answer as an inbound message. The worker runs the state machine as for
+  any message: it creates the account or carries out the approved request, and
+  the replies go out through the outbound queue. WhatsApp's own "form completed"
+  message (`nfm_reply`) is dropped, since the endpoint already has everything.
+- On the review screen, the back arrow returns to any screen. A changed answer
+  goes straight back to the review once everything is filled in.
+- Each form has a token kept with the session (`flow:<token>` in sessions.db).
+  The form stops working when the request finishes, the user types `TYPE`, or the
+  session expires.
+
+**Setting them up on Meta:**
+
+```sh
+bun run flows keys                     # .flow-keys/private.pem and public.pem (git-ignored)
+# set WHATSAPP_FLOW_PRIVATE_KEY to private.pem's contents (locally and on the server)
+bun run flows upload-key               # registers the public key on WHATSAPP_PHONE_NUMBER_ID
+bun run flows sync https://<host>/flows --app <meta app id>
+# set WHATSAPP_FLOW_ID_ONBOARDING / _PIN / _TRANSACTION to the ids it prints
+bun run flows status                   # validation errors and health of each Flow
+```
+
+Until they're published, set `WHATSAPP_FLOW_MODE=draft` to send the draft Flows
+to test numbers. Publish with `bun run flows sync … --publish`. A published Flow
+can't be changed: the next `sync` creates a new one and prints its id. In the
+simulator the forms work with no Meta setup: the page renders the same Flow JSON
+and calls `POST /dev/flows/exchange`.
 
 ---
 
@@ -554,6 +635,7 @@ src/
   database/              Drizzle schema model, the Bun.SQL migrator, users and session-log repositories
   admin/                 sign-in, admin API and page, jobs API + dashboard mounts
   security/              throttler storage on bun-cache, client IP
+  flows/                 WhatsApp Flows: Flow JSON, the encrypted endpoint, each screen's validation
   dev/                   the simulator API and the UI-facing OpenAPI document
   shared/                phone validation, used by the API and the UIs
 ui/
@@ -561,7 +643,7 @@ ui/
   admin.html, src/admin/ the admin UI
   src/api.gen.ts         generated typed client (do not edit)
 migrations/              timestamped SQL migrations generated from the model (+ drizzle-kit's meta/)
-scripts/                 dev runner, migrations (db.ts), admin creation, OpenAPI export
+scripts/                 dev runner, migrations (db.ts), admin creation, OpenAPI export, Flows setup (flows.ts)
 test/                    bun tests
 Dockerfile, .dockerignore
 drizzle.config.ts        drizzle-kit settings (model, output folder, timestamp prefix)
@@ -587,28 +669,30 @@ drizzle.config.ts        drizzle-kit settings (model, output folder, timestamp p
 
 ## Troubleshooting
 
-| Symptom                                                        | Likely cause                                                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`          |
-| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                        |
-| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev   |
-| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines |
-| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`  |
-| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                           |
-| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                  |
-| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                            |
-| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                          |
-| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration      |
-| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                     |
-| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                    |
+| Symptom                                                        | Likely cause                                                                                              |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`                  |
+| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                                |
+| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev           |
+| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines         |
+| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`          |
+| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                                   |
+| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                          |
+| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                                    |
+| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                                  |
+| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration              |
+| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                             |
+| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                            |
+| A form says it can't be opened, or the Flow health check fails | The public key isn't uploaded (`bun run flows upload-key`), or `WHATSAPP_FLOW_PRIVATE_KEY` isn't its pair |
+| A form shows "no longer available"                             | `427`: a newer form was sent, the request finished, or the session expired; open the latest one           |
 
 ---
 
 ## Known limitations
 
 - **Dummy money:** no payment gateway, no real transfers, no BVN verification.
-- **PINs travel as chat messages,** so they stay in the user's WhatsApp history.
-  WhatsApp Flows would collect them in a form instead.
+- **Without the Flows** (not set up, or a user who replies `TYPE`), BVNs and PINs
+  are typed as chat messages, so they stay in the user's WhatsApp history.
 - **BVNs are stored unencrypted** in `investnow.db`.
 - **Single host:** SQLite, and a per-user message ordering that holds within one
   process. Scaling out means a shared driver (Postgres/Redis are supported by

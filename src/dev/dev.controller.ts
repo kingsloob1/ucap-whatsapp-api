@@ -9,6 +9,7 @@ import {
   Controller,
   Delete,
   Get,
+  GoneException,
   HttpCode,
   Inject,
   Post,
@@ -20,10 +21,19 @@ import { APP_DB } from "../database/database";
 import { SessionsRepository } from "../database/sessions.repository";
 import { QueueService } from "../queue/queue.service";
 import { toPlainText } from "../whatsapp/messages";
+import { FLOW_DEFINITIONS } from "../flows/definitions";
+import {
+  FlowExchangeService,
+  FlowTokenError,
+} from "../flows/flow-exchange.service";
 import { WhatsAppClient } from "../whatsapp/whatsapp.client";
 import type {
   ConversationQuery,
   ConversationResponse,
+  FlowDefinitionResponse,
+  FlowExchangeBody,
+  FlowExchangeResponse,
+  FlowNameParams,
   OutboxResponse,
   ResetParams,
   ResetResponse,
@@ -36,6 +46,10 @@ import {
   ConversationQueryDto,
   ConversationResponseDto,
   ErrorResponseDto,
+  FlowDefinitionDto,
+  FlowExchangeBodyDto,
+  FlowExchangeResponseDto,
+  FlowNameParamsDto,
   OutboxResponseDto,
   ResetParamsDto,
   ResetResponseDto,
@@ -67,8 +81,59 @@ export class DevController {
     private readonly whatsapp: WhatsAppClient,
     private readonly queues: QueueService,
     private readonly log: SessionsRepository,
+    private readonly flows: FlowExchangeService,
     @Inject(APP_DB) private readonly sql: SQL,
   ) {}
+
+  /** A Flow's Flow JSON, which the simulator renders as WhatsApp would. */
+  @Get("flows/:name")
+  @Validate({
+    params: FlowNameParamsDto,
+    responses: { 200: FlowDefinitionDto, 400: ErrorResponseDto },
+  })
+  @Describe({
+    operationId: "flowDefinition",
+    summary: "The Flow JSON of a WhatsApp Flow (onboarding, pin, transaction)",
+  })
+  flowDefinition(
+    @ValidParams() params: FlowNameParams,
+  ): FlowDefinitionResponse {
+    return { ...FLOW_DEFINITIONS[params.name] };
+  }
+
+  /**
+   * A form's request, as WhatsApp would send it to the Flow endpoint but
+   * unencrypted: the simulator's forms. Only simulator conversations' tokens
+   * are accepted.
+   */
+  @Post("flows/exchange")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Validate({
+    body: FlowExchangeBodyDto,
+    responses: {
+      200: FlowExchangeResponseDto,
+      400: ErrorResponseDto,
+      410: ErrorResponseDto,
+      429: ErrorResponseDto,
+    },
+  })
+  @Describe({
+    operationId: "flowExchange",
+    summary:
+      "Send a simulator form's request to the Flow endpoint's logic (no encryption)",
+  })
+  async flowExchange(
+    @ValidBody() body: FlowExchangeBody,
+  ): Promise<FlowExchangeResponse> {
+    try {
+      return await this.flows.exchange(body, { simulatorOnly: true });
+    } catch (error) {
+      if (error instanceof FlowTokenError)
+        throw new GoneException("This form has expired. Open the latest one.");
+      throw error;
+    }
+  }
 
   @Post("messages")
   @HttpCode(202)

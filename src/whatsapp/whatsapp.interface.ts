@@ -1,4 +1,5 @@
 import type { SessionSource } from "../database/sessions.interface";
+import type { FlowName } from "../flows/flows.interface";
 import type {
   MessageBaseDto,
   VerifyQueryDto,
@@ -38,6 +39,21 @@ export type OutboundMessage =
       footer?: string;
       button: string;
       sections: ListSection[];
+    }
+  | {
+      /**
+       * A WhatsApp Flow: a form that opens over the chat. What the user enters
+       * goes to the Flow endpoint, encrypted, and never appears as a chat message.
+       */
+      kind: "flow";
+      body: string;
+      header?: string;
+      footer?: string;
+      /** The button that opens the form (20 characters). */
+      cta: string;
+      flow: FlowName;
+      /** Ties the form's requests to this conversation (`flow:<token>` in the session cache). */
+      token: string;
     };
 
 /** What the state machine reads from an inbound message. */
@@ -46,6 +62,11 @@ export interface InboundInput {
   text: string;
   /** The id of the tapped button or list row, when the message was a tap. */
   choiceId?: string;
+  /**
+   * Set on the message the Flow endpoint queues when a form is finished: the
+   * form's token. Its `text` is the user's last answer, already masked.
+   */
+  flowToken?: string;
 }
 
 /** A message that dry-run mode recorded instead of sending. */

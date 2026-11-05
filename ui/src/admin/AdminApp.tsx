@@ -573,7 +573,11 @@ function SessionDrawer({
                 <li key={e.id} className={`event ${e.direction}`}>
                   <div className="event-meta">
                     <span>
-                      {e.direction === "in" ? "User" : `Bot · ${e.kind}`}
+                      {e.direction === "in"
+                        ? e.kind === "flow"
+                          ? "User · form"
+                          : "User"
+                        : `Bot · ${e.kind}`}
                     </span>
                     <span className="mono">
                       {e.stepBefore ?? "∅"} → {e.stepAfter ?? "∅"}

@@ -52,6 +52,17 @@ export const OutboundMessageDto = z.discriminatedUnion("kind", [
       }),
     ),
   }),
+  z.object({
+    kind: z.literal("flow"),
+    body: z.string(),
+    header: z.string().optional(),
+    footer: z.string().optional(),
+    /** The button that opens the form. */
+    cta: z.string(),
+    flow: z.enum(["onboarding", "pin", "transaction"]),
+    /** What the form's requests to `POST /dev/flows/exchange` carry. */
+    token: z.string(),
+  }),
 ]);
 
 export const SimulateResponseDto = z.object({
@@ -87,6 +98,8 @@ export const ConversationEntryDto = z.discriminatedUnion("direction", [
     /** As stored: PINs and BVNs redacted. */
     text: z.string(),
     choiceId: z.string().nullable(),
+    /** An answer given in a WhatsApp Flow (a form), shown as a message but never typed in the chat. */
+    form: z.boolean(),
   }),
   z.object({
     id: z.number(),
@@ -103,6 +116,32 @@ export const ConversationResponseDto = z.object({
   /** The step the conversation is at; null when there is no live session. */
   step: z.string().nullable(),
   entries: z.array(ConversationEntryDto),
+});
+
+export const FlowNameParamsDto = z.object({
+  name: z.enum(["onboarding", "pin", "transaction"]),
+});
+
+/** A Flow's Flow JSON, as uploaded to Meta: the simulator renders its screens. */
+export const FlowDefinitionDto = z.looseObject({
+  version: z.string(),
+  data_api_version: z.string(),
+  routing_model: z.record(z.string(), z.array(z.string())),
+  screens: z.array(z.record(z.string(), z.unknown())),
+});
+
+/** One request from a form in the simulator: what WhatsApp would send the Flow endpoint, decrypted. */
+export const FlowExchangeBodyDto = z.object({
+  flow_token: z.string().min(1).max(128),
+  action: z.enum(["INIT", "BACK", "data_exchange"]),
+  screen: z.string().max(64).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** The endpoint's answer: the next screen and its data; `SUCCESS` closes the form. */
+export const FlowExchangeResponseDto = z.object({
+  screen: z.string().optional(),
+  data: z.record(z.string(), z.unknown()),
 });
 
 export const ResetParamsDto = z.object({ waId: WaIdDto });

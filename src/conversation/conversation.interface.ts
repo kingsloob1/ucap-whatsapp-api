@@ -1,4 +1,5 @@
 import type { SessionSource } from "../database/sessions.interface";
+import type { FlowRef } from "../flows/flows.interface";
 import type { User } from "../database/users.interface";
 import type {
   InboundInput,
@@ -38,7 +39,11 @@ export interface Context {
   input: InboundInput;
   /** The tapped id, or the typed text, lower-cased and trimmed: what commands and choices are matched on. */
   answer: string;
+  source: SessionSource;
 }
+
+/** A money action started from the menu, before its amount is known. */
+export type TransactionType = "fund" | "withdraw" | "buy";
 
 /** A money action waiting for the user's PIN. */
 export type PendingAction =
@@ -65,6 +70,14 @@ export interface OnboardingDraft {
 export type Session =
   // Onboarding
   | { step: "onboarding_prompt" }
+  // Onboarding in a WhatsApp Flow: each screen the endpoint accepts fills the
+  // draft; `submitted` is set when the user confirms on the review screen.
+  | {
+      step: "onboarding_flow";
+      flowToken: string;
+      draft: Partial<OnboardingDraft>;
+      submitted?: boolean;
+    }
   | { step: "ask_bvn" }
   | { step: "ask_dob"; bvn: string }
   | { step: "select_products"; bvn: string; dateOfBirth: string }
@@ -95,13 +108,31 @@ export type Session =
   | { step: "withdraw_amount" }
   | { step: "buy_product" }
   | { step: "buy_amount"; productCode: string }
-  | { step: "authorize"; action: PendingAction; attempts: number };
+  // Fund, withdraw or buy in a WhatsApp Flow: the amount (and product) screen
+  // sets `action`, the PIN screen `approved`.
+  | {
+      step: "transaction";
+      type: TransactionType;
+      flowToken: string;
+      action?: PendingAction;
+      attempts: number;
+      approved?: boolean;
+    }
+  // A PIN to approve `action`: typed in the chat, or, with `flowToken`, in the PIN Flow.
+  | {
+      step: "authorize";
+      action: PendingAction;
+      attempts: number;
+      flowToken?: string;
+      approved?: boolean;
+    };
 
 export type Step = Session["step"];
 
 /** The cache's typed schema. */
 export type SessionCacheSchema = {
   [key: `session:${string}`]: Session;
+  [key: `flow:${string}`]: FlowRef;
 };
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };

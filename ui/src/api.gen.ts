@@ -4,7 +4,7 @@
  * `manifest` it takes. Do not edit; regenerate it, and run the same command
  * with `--check` in CI.
  *
- * typesHash: 3be3d4044579c404
+ * typesHash: 0ec128e8fe4d47be
  */
 import type { RouteManifest } from "@kingsleyweb/bun-client";
 
@@ -12,7 +12,7 @@ import type { RouteManifest } from "@kingsleyweb/bun-client";
  * The documents' hash, as the header records it: the `buster` of a
  * persisted query cache (`@kingsleyweb/bun-client/persist`).
  */
-export const typesHash = "3be3d4044579c404";
+export const typesHash = "0ec128e8fe4d47be";
 
 export interface Routes {
   /** Sign in with an email or username and a password */
@@ -254,6 +254,7 @@ export interface Routes {
               messageId: string | null;
               text: string;
               choiceId: string | null;
+              form: boolean;
             }
           | {
               id: number;
@@ -291,11 +292,78 @@ export interface Routes {
                         description?: string;
                       }[];
                     }[];
+                  }
+                | {
+                    kind: "flow";
+                    body: string;
+                    header?: string;
+                    footer?: string;
+                    cta: string;
+                    flow: "onboarding" | "pin" | "transaction";
+                    token: string;
                   };
             }
         )[];
       };
       400: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+      429: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+    };
+  };
+  /** The Flow JSON of a WhatsApp Flow (onboarding, pin, transaction) */
+  "GET /dev/flows/:name": {
+    operationId: "flowDefinition";
+    params: {
+      name: "onboarding" | "pin" | "transaction";
+    };
+    query: Record<never, never>;
+    headers: Record<never, never>;
+    body: undefined;
+    responses: {
+      200: {
+        version: string;
+        data_api_version: string;
+        routing_model: Record<string, string[]>;
+        screens: Record<string, unknown>[];
+        [key: string]: unknown;
+      };
+      400: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+    };
+  };
+  /** Send a simulator form's request to the Flow endpoint's logic (no encryption) */
+  "POST /dev/flows/exchange": {
+    operationId: "flowExchange";
+    params: Record<never, never>;
+    query: Record<never, never>;
+    headers: Record<never, never>;
+    body: {
+      flow_token: string;
+      action: "INIT" | "BACK" | "data_exchange";
+      screen?: string;
+      data?: Record<string, unknown>;
+    };
+    responses: {
+      200: {
+        screen?: string;
+        data: Record<string, unknown>;
+      };
+      400: {
+        statusCode: number;
+        message: string | string[];
+        error?: string;
+      };
+      410: {
         statusCode: number;
         message: string | string[];
         error?: string;
@@ -377,6 +445,15 @@ export interface Routes {
                     description?: string;
                   }[];
                 }[];
+              }
+            | {
+                kind: "flow";
+                body: string;
+                header?: string;
+                footer?: string;
+                cta: string;
+                flow: "onboarding" | "pin" | "transaction";
+                token: string;
               };
           at: string;
         }[];
@@ -427,6 +504,15 @@ export interface Routes {
                   description?: string;
                 }[];
               }[];
+            }
+          | {
+              kind: "flow";
+              body: string;
+              header?: string;
+              footer?: string;
+              cta: string;
+              flow: "onboarding" | "pin" | "transaction";
+              token: string;
             }
         )[];
         transcript: string;
@@ -506,6 +592,14 @@ export const manifest = {
   "GET /dev/conversations/:waId": {
     operationId: "conversation",
     statuses: [200, 400, 429],
+  },
+  "GET /dev/flows/:name": {
+    operationId: "flowDefinition",
+    statuses: [200, 400],
+  },
+  "POST /dev/flows/exchange": {
+    operationId: "flowExchange",
+    statuses: [200, 400, 410, 429],
   },
   "POST /dev/messages": {
     operationId: "sendMessage",
