@@ -146,7 +146,7 @@ stateDiagram-v2
   OnboardingPrompt --> AskBVN: Proceed (chat steps)
   OnboardingPrompt --> [*]: Close
   OnboardingForm --> Menu: form done, saved to investnow.db
-  OnboardingForm --> AskBVN: TYPE
+  OnboardingForm --> AskBVN: form refused, or TYPE
   AskBVN --> AskDOB: 11 digits from 22, not registered
   AskDOB --> SelectProducts: DD/MM/YYYY, 5 to 120
   SelectProducts --> SetPIN: e.g. 1,3,5 or all
@@ -158,7 +158,7 @@ stateDiagram-v2
   Review --> Menu: Confirm, saved to investnow.db
   Menu --> TransactionForm: Fund, Withdraw or Buy (Flows on)
   TransactionForm --> Menu: amount and PIN ok, or 3 wrong PINs
-  TransactionForm --> FundAmount: TYPE
+  TransactionForm --> FundAmount: form refused, or TYPE
   Menu --> FundAmount: Fund wallet (chat steps)
   Menu --> WithdrawAmount: Withdraw (chat steps)
   Menu --> BuyProduct: Buy products (chat steps)
@@ -168,13 +168,17 @@ stateDiagram-v2
   BuyProduct --> BuyAmount
   BuyAmount --> Authorize
   Authorize --> Menu: PIN ok (form or typed), or 3 wrong PINs
+  note right of Menu: CANCEL in any transaction step confirms it and returns here
+  note right of OnboardingPrompt: CANCEL in any onboarding step returns here
 ```
 
 - **Welcome:** a new user gets **Proceed** and **Close** buttons; an onboarded user gets the menu.
   New users, and anyone whose session closes, are also told about InvestNow's USSD service, `*7277#`.
 - **Forms first:** where the [Flows](#whatsapp-flows-forms) are set up, onboarding, fund/withdraw/buy
   and PIN approvals open a WhatsApp form instead of the chat steps below, so BVNs and PINs are never
-  typed into the chat. Replying `TYPE` uses the chat steps instead, and a typed PIN is still accepted.
+  typed into the chat. If WhatsApp refuses a form, the chat steps start by themselves. A user who
+  writes instead of filling in the form gets it again, now offering `TYPE` for the chat steps; a
+  typed PIN is always accepted.
 - **Onboarding:**
   - **BVN**: 11 digits starting with `22` (as every BVN does), not one digit repeated, not already
     registered. The prompt tells users who don't know it to dial `*565*0#`.
@@ -196,8 +200,16 @@ stateDiagram-v2
   - **Withdraw**: amount (up to the wallet balance), then PIN.
   - **Buy products**: product, amount (up to the wallet balance), then PIN. This moves money from the wallet into the product.
 - **Amounts:** `5000`, `5,000`, `₦5,000.50`, `N5000` and `5k` all work; the range is ₦100 to ₦10,000,000.
-- **Everywhere:** `MENU` goes back to the menu, `CANCEL` (`exit`, `stop`, `close`, …) ends the session, and `hi` starts over.
-  Three wrong PINs cancel the pending request. A session expires after 24 h of inactivity (`SESSION_TTL_MS`).
+- **Everywhere:**
+  - `CANCEL` (or `back`, `go back`, `abort`, `never mind`, `nvm`, `forget it`, `not now`, `no thanks`,
+    in any case and with punctuation) cancels what is in progress, says so ("❌ Your withdrawal was
+    cancelled. No money was moved."), and sends the menu again. An open form stops working.
+    During onboarding it says nothing was saved and offers **Proceed**/**Close** again; at that prompt
+    it ends the session. While an answer is being edited from the review, `BACK` returns to the
+    review instead. At the menu there is nothing to cancel, so the menu is shown again.
+  - `MENU` goes back to the menu, `CLOSE` (`exit`, `quit`, `stop`, `bye`, `end`) ends the session,
+    and `hi` starts over.
+  - Three wrong PINs cancel the pending request. A session expires after 24 h of inactivity (`SESSION_TTL_MS`).
 
 Dummy behaviour: funding always succeeds instantly, and so do withdrawals ("on
 its way to your bank account"). Each transaction gets a reference and a row in
@@ -358,11 +370,14 @@ defined in `src/flows/definitions.ts`:
 - On the review screen, the back arrow returns to any screen. A changed answer
   goes straight back to the review once everything is filled in.
 - If WhatsApp refuses a form for good (for example `139000 Blocked by Integrity`
-  while the business isn't verified), the outbound worker sends the form's text
-  fallback instead, which offers the chat steps (`TYPE`, or a typed PIN).
+  while Meta blocks the account's forms), the outbound worker asks the
+  conversation to move to the chat steps and sends their first question instead:
+  the BVN, the amount (or the product list), or the PIN. The user is never asked
+  to reply `TYPE` first. The form's message only offers `TYPE` when it is sent
+  again, to someone who wrote instead of filling it in.
 - Each form has a token kept with the session (`flow:<token>` in sessions.db).
-  The form stops working when the request finishes, the user types `TYPE`, or the
-  session expires.
+  The form stops working when the request finishes, WhatsApp refuses it, the user
+  types `TYPE`, or the session expires.
 
 **Setting them up on Meta:**
 
@@ -672,23 +687,23 @@ drizzle.config.ts        drizzle-kit settings (model, output folder, timestamp p
 
 ## Troubleshooting
 
-| Symptom                                                        | Likely cause                                                                                                            |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`                                |
-| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                                              |
-| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev                         |
-| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines                       |
-| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`                        |
-| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                                                 |
-| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                                        |
-| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                                                  |
-| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                                                |
-| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration                            |
-| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                                           |
-| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                                          |
-| A form says it can't be opened, or the Flow health check fails | The public key isn't uploaded (`bun run flows upload-key`), or `WHATSAPP_FLOW_PRIVATE_KEY` isn't its pair               |
-| `WARN … form … was refused (… 139000 Blocked by Integrity)`    | Meta blocks Flow messages until the business is verified and its profile complete; the bot sends the chat steps instead |
-| A form shows "no longer available"                             | `427`: a newer form was sent, the request finished, or the session expired; open the latest one                         |
+| Symptom                                                        | Likely cause                                                                                                                                                                                              |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nest can't resolve a constructor dependency (`?` in the error) | Not run from the project root: Bun didn't read `tsconfig.json`'s `emitDecoratorMetadata`                                                                                                                  |
+| `401 Invalid webhook signature` from Meta's test button        | `WHATSAPP_APP_SECRET` is not the app's secret, or a proxy rewrote the body                                                                                                                                |
+| `403 Blocked` on the webhook                                   | That IP failed the signature/verify check 10 times; wait an hour, or clear `security.db` in dev                                                                                                           |
+| Webhook returns `200 {"received":0}`                           | Payload for another account or phone number, or stale messages: see the `WebhookOrigin` log lines                                                                                                         |
+| Replies never arrive                                           | Dry-run (no token or phone number id), or the outbound job is retrying/dead: check `/admin/jobs`                                                                                                          |
+| `429` on admin sign-in                                         | 10/min per address, or the account's 5-failure lockout; wait 15 minutes                                                                                                                                   |
+| `/admin` answers 503                                           | Production without the built UI: `bun run ui:build` (the Docker image builds it)                                                                                                                          |
+| `/admin/jobs` keeps redirecting to sign-in                     | The cookie is `Secure` in production: serve over HTTPS                                                                                                                                                    |
+| Start fails: `investnow.db is not up to date`                  | Pending migrations with `MIGRATE_ON_START` off: run `bun run db:migrate`                                                                                                                                  |
+| `Migrations and database disagree: … is modified`              | An applied migration file was edited: restore it from git, put the change in a new migration                                                                                                              |
+| `db:check` fails                                               | The model changed without a migration: `bun run db:generate -- --name <what>`                                                                                                                             |
+| `ui:types:check` fails                                         | Run `bun run ui:types:generate` and commit `ui/src/api.gen.ts`                                                                                                                                            |
+| A form says it can't be opened, or the Flow health check fails | The public key isn't uploaded (`bun run flows upload-key`), or `WHATSAPP_FLOW_PRIVATE_KEY` isn't its pair                                                                                                 |
+| `WARN … form … was refused (… 139000 Blocked by Integrity)`    | Meta blocks the account's forms: an unverified business, an incomplete profile, or a payment method error (`141006`). `bun run flows status` lists what blocks them. The bot sends the chat steps instead |
+| A form shows "no longer available"                             | `427`: a newer form was sent, the request finished, or the session expired; open the latest one                                                                                                           |
 
 ---
 

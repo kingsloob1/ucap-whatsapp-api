@@ -53,30 +53,56 @@ afterAll(async () => {
   await app.close();
 });
 
-test("a form WhatsApp refuses is replaced by the chat steps", async () => {
+test("a refused form is replaced by the chat steps, without asking for TYPE", async () => {
   const queues = app.get(QueueService);
   const conversation = app.get(ConversationService);
   const waId = "2348061110001";
-  const message = (id: string, text: string, choiceId?: string) => ({
-    messageId: id,
-    phoneNumberId: "PHONE_ID",
-    waId,
-    timestamp: Math.floor(Date.now() / 1000),
-    input: { text, ...(choiceId ? { choiceId } : {}) },
-  });
+  let n = 0;
+  const stepOf = async () => (await conversation.session(waId))?.step;
+  /** Sends a message and waits for the conversation to reach `step`. */
+  async function say(text: string, step: string, choiceId?: string) {
+    await queues.enqueueInbound([
+      {
+        messageId: `wamid.in${++n}`,
+        phoneNumberId: "PHONE_ID",
+        waId,
+        timestamp: Math.floor(Date.now() / 1000),
+        input: { text, ...(choiceId ? { choiceId } : {}) },
+      },
+    ]);
+    await waitFor(async () => (await stepOf()) === step);
+  }
+  const sentText = (part: string) =>
+    waitFor(() => sent.some((m) => m.type === "text" && m.body.includes(part)));
 
-  await queues.enqueueInbound([message("wamid.in1", "hi")]);
-  await waitFor(() => sent.length === 1);
-  await queues.enqueueInbound([
-    message("wamid.in2", "Proceed", "onboard:proceed"),
-  ]);
-  await waitFor(() => sent.length === 3);
+  await say("hi", "onboarding_prompt");
+  // The onboarding form is refused: the chat asks for the BVN straight away.
+  await say("Proceed", "ask_bvn", "onboard:proceed");
+  await sentText("Step 1 of 4");
+  const form = sent.findIndex((m) => m.type === "flow");
+  expect(sent[form]!.body).not.toContain("TYPE");
+  expect(sent[form + 1]).toMatchObject({ type: "text" });
+  expect(sent[form + 1]!.body).toContain("Great, let's get you set up!");
+  expect(sent.some((m) => m.body.includes("Reply *TYPE*"))).toBe(false);
 
-  expect(sent.map((m) => m.type)).toEqual(["button", "flow", "text"]);
-  expect(sent[2]!.body).toContain("Reply *TYPE* to answer a few questions");
-  // The conversation is still waiting for the form, so TYPE works.
-  expect((await conversation.session(waId))?.step).toBe("onboarding_flow");
-  await queues.enqueueInbound([message("wamid.in3", "type")]);
-  await waitFor(() => sent.length === 4);
-  expect(sent[3]!.body).toContain("Step 1 of 4");
+  await say("22233344455", "ask_dob");
+  await say("25/12/1990", "select_products");
+  await say("1,5", "set_pin");
+  await say("4826", "confirm_pin");
+  await say("4826", "review");
+  await say("Confirm & create", "menu", "review:confirm");
+
+  // The fund form is refused: the chat asks for the amount.
+  await say("Fund wallet", "fund_amount", "menu:fund");
+  await sentText("How much would you like to add to your wallet?");
+  expect(sent.at(-2)).toMatchObject({ type: "flow" });
+
+  // The PIN form is refused: the chat asks for the PIN, and a typed PIN approves.
+  await say("1000", "authorize");
+  await sentText("Please enter your 4-digit PIN to approve");
+  const session = await conversation.session(waId);
+  expect(session && "flowToken" in session).toBe(false);
+  await say("4826", "menu");
+  await sentText("Your wallet has been funded");
+  expect(sent.some((m) => m.body.includes("Reply *TYPE*"))).toBe(false);
 });

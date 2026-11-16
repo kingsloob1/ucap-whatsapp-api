@@ -49,15 +49,8 @@ import type {
   Transition,
 } from "./conversation.interface";
 
-const CLOSE_WORDS = new Set([
-  "cancel",
-  "exit",
-  "close",
-  "quit",
-  "stop",
-  "bye",
-  "end",
-]);
+/** Words that end the conversation. */
+const CLOSE_WORDS = new Set(["exit", "close", "quit", "stop", "bye", "end"]);
 const GREETINGS = new Set([
   "hi",
   "hello",
@@ -67,6 +60,28 @@ const GREETINGS = new Set([
   "good morning",
   "good afternoon",
   "good evening",
+]);
+/**
+ * Words that cancel what is in progress (onboarding, a transaction, a PIN
+ * approval) and go back to the menu. In an edit step, BACK and GO BACK return
+ * to the review instead.
+ */
+const CANCEL_WORDS = new Set([
+  "cancel",
+  "cancel it",
+  "cancel this",
+  "cancel that",
+  "back",
+  "go back",
+  "abort",
+  "never mind",
+  "nevermind",
+  "nvm",
+  "forget it",
+  "forget about it",
+  "not now",
+  "no thanks",
+  "no thank you",
 ]);
 /** What a user replies to answer a Flow's questions in the chat instead. */
 const TYPE_WORDS = new Set(["type", "chat", "type it", "text"]);
@@ -90,7 +105,7 @@ const REVIEW = {
 } as const;
 
 /** What an edit step accepts to leave the current value as it is. */
-const KEEP_WORDS = new Set(["back", "keep", "review"]);
+const KEEP_WORDS = new Set(["back", "go back", "keep", "review"]);
 
 const BVN_TAKEN =
   "This BVN is already linked to another InvestNow account. Please check the number and try again, " +
@@ -168,6 +183,57 @@ export class ConversationService {
     return flows.privateKey !== "" && flows.ids[flow] !== "";
   }
 
+  /**
+   * WhatsApp refused to deliver a form (Meta's 139000 integrity block, for
+   * one): the conversation moves on to the chat steps, and this answers what
+   * to send instead of the form, the first chat question. Nothing when the
+   * session no longer waits for that form.
+   */
+  formRefused(
+    waId: string,
+    message: Extract<OutboundMessage, { kind: "flow" }>,
+  ): Promise<OutboundMessage[]> {
+    return this.mutex.run(waId, async () => {
+      const [session, user] = await Promise.all([
+        this.sessions.get(sessionKey(waId)),
+        this.users.findByWaId(waId),
+      ]);
+      if (!session || !("flowToken" in session)) return [];
+      if (session.flowToken !== message.token) return [];
+      await this.sessions.delete(flowKey(message.token));
+      let next: Session;
+      let replies: OutboundMessage[];
+      switch (session.step) {
+        case "onboarding_flow":
+          next = { step: "ask_bvn" };
+          replies = [text(message.fallback)];
+          break;
+        case "transaction": {
+          if (!user) return [];
+          const chat = await this.startInChat(session.type, user);
+          if (!chat.next) return chat.replies;
+          next = chat.next;
+          replies = chat.replies;
+          break;
+        }
+        case "authorize": {
+          // A typed PIN is accepted all along; only the form goes.
+          const { flowToken: _refused, ...rest } = session;
+          next = rest;
+          replies = [text(message.fallback)];
+          break;
+        }
+        default:
+          return [];
+      }
+      await this.saveSession(waId, next);
+      this.logger.debug(
+        `${waId}: the ${message.flow} form was refused: ${session.step} -> ${next.step}`,
+      );
+      return replies;
+    });
+  }
+
   private async process(
     contact: Contact,
     input: InboundInput,
@@ -216,9 +282,10 @@ export class ConversationService {
     ctx: Context,
   ): Promise<Transition> {
     const { answer, user } = ctx;
+    const phrase = asPhrase(answer);
 
     if (ctx.input.flowToken) return this.flowFinished(session, ctx);
-    if (CLOSE_WORDS.has(answer) || answer === CHOICE.close) return this.close();
+    if (CLOSE_WORDS.has(phrase) || answer === CHOICE.close) return this.close();
     if (!session || GREETINGS.has(answer)) return this.welcome(ctx);
     if (answer === "menu")
       return user ? this.menu("What would you like to do?") : this.welcome(ctx);
@@ -234,6 +301,12 @@ export class ConversationService {
     // A session that no longer fits the user (e.g. onboarding finished elsewhere) starts over.
     const onboarded = isOnboardedStep(session);
     if (onboarded !== (user !== null)) return this.welcome(ctx);
+
+    if (
+      CANCEL_WORDS.has(phrase) &&
+      !(isEditStep(session) && KEEP_WORDS.has(phrase))
+    )
+      return this.cancel(session);
 
     switch (session.step) {
       case "onboarding_prompt":
@@ -299,6 +372,38 @@ export class ConversationService {
         ),
       ],
     };
+  }
+
+  /**
+   * CANCEL (or BACK, NEVER MIND…): drops what is in progress, says so, and
+   * shows the menu again. Onboarding, which has no menu yet, goes back to the
+   * Proceed/Close prompt; at that prompt, cancelling ends the conversation.
+   */
+  private async cancel(session: Session): Promise<Transition> {
+    if ("flowToken" in session && session.flowToken)
+      await this.sessions.delete(flowKey(session.flowToken));
+
+    if (session.step === "onboarding_prompt") return this.close();
+    if (!isOnboardedStep(session))
+      return {
+        next: { step: "onboarding_prompt" },
+        replies: [
+          text("❌ Your account setup was cancelled. Nothing was saved."),
+          buttons("Would you like to start again? It takes about 2 minutes.", [
+            { id: CHOICE.proceed, title: "Proceed" },
+            { id: CHOICE.close, title: "Close" },
+          ]),
+        ],
+      };
+
+    const what = cancelledWhat(session);
+    if (!what)
+      return this.menu("There's nothing to cancel. What would you like to do?");
+    return this.menu("What would you like to do next?", [
+      text(
+        `❌ ${what} was cancelled.${what === CANCELLED.balance ? "" : " No money was moved."}`,
+      ),
+    ]);
   }
 
   private close(): Transition {
@@ -378,6 +483,7 @@ export class ConversationService {
         onboardingFlowMessage(
           session.flowToken,
           "Your account form is still waiting for you.",
+          { offerChat: true },
         ),
       ],
     };
@@ -807,7 +913,10 @@ export class ConversationService {
               ],
             },
           ],
-          { footer: "Reply MENU anytime, or CANCEL to stop" },
+          {
+            footer:
+              "Reply CANCEL to stop anything in progress, or CLOSE to end",
+          },
         ),
       ],
     };
@@ -917,7 +1026,11 @@ export class ConversationService {
     }
     return {
       next: session,
-      replies: [transactionFlowMessage(session.type, session.flowToken)],
+      replies: [
+        transactionFlowMessage(session.type, session.flowToken, {
+          offerChat: true,
+        }),
+      ],
     };
   }
 
@@ -1156,6 +1269,45 @@ export class ConversationService {
 
 /* -------------------------------------------------------------- helpers */
 
+/** An answer as a phrase to match word lists: letters, digits and single spaces ("Cancel!" → "cancel"). */
+function asPhrase(answer: string): string {
+  return answer
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isEditStep(session: Session): boolean {
+  return session.step.startsWith("edit_");
+}
+
+/** What a cancelled request is called in the confirmation. */
+const CANCELLED = {
+  fund: "Your wallet funding",
+  withdraw: "Your withdrawal",
+  buy: "Your purchase",
+  balance: "Your balance check",
+} as const satisfies Record<PendingAction["type"], string>;
+
+/** The request a session of an onboarded user has in progress, or null at the menu. */
+function cancelledWhat(session: Session): string | null {
+  switch (session.step) {
+    case "fund_amount":
+      return CANCELLED.fund;
+    case "withdraw_amount":
+      return CANCELLED.withdraw;
+    case "buy_product":
+    case "buy_amount":
+      return CANCELLED.buy;
+    case "transaction":
+      return CANCELLED[session.type];
+    case "authorize":
+      return CANCELLED[session.action.type];
+    default:
+      return null;
+  }
+}
+
 function isOnboardedStep(session: Session): boolean {
   switch (session.step) {
     case "onboarding_prompt":
@@ -1290,17 +1442,30 @@ function flowMessage(
   return { kind: "flow", flow, token, body, cta, fallback };
 }
 
-function onboardingFlowMessage(token: string, lead: string): OutboundMessage {
+/**
+ * The first form message doesn't mention TYPE: when WhatsApp refuses the form,
+ * the chat steps start by themselves. The reminder sent when the user writes
+ * instead of filling it in offers them, for a phone that can't open forms.
+ */
+interface FormOptions {
+  offerChat?: boolean;
+}
+
+function onboardingFlowMessage(
+  token: string,
+  lead: string,
+  { offerChat = false }: FormOptions = {},
+): OutboundMessage {
   return flowMessage(
     "onboarding",
     token,
     `${lead}\n\nTap *Open form* to enter your BVN, date of birth, products and PIN. ` +
       "What you enter in the form is sent securely and isn't shown in this chat, " +
-      "and you can review and change it before your account is created.\n\n" +
-      TYPE_INSTEAD,
+      "and you can review and change it before your account is created." +
+      (offerChat ? `\n\n${TYPE_INSTEAD}` : ""),
     "Open form",
-    `${lead}\n\nReply *TYPE* to answer a few questions here in the chat: your BVN, ` +
-      "date of birth, the products you're interested in, and a PIN.",
+    // Sent if WhatsApp refuses the form: the chat steps' first question.
+    `${lead}\n\n${bvnPrompt("*Step 1 of 4*\nPlease enter")}`,
   );
 }
 
@@ -1313,6 +1478,7 @@ const TRANSACTION_CTA: Record<TransactionType, string> = {
 function transactionFlowMessage(
   type: TransactionType,
   token: string,
+  { offerChat = false }: FormOptions = {},
 ): OutboundMessage {
   const what = {
     fund: "enter how much to add to your wallet",
@@ -1323,9 +1489,12 @@ function transactionFlowMessage(
     "transaction",
     token,
     `Tap *${TRANSACTION_CTA[type]}* to ${what}, then approve it with your PIN.\n\n` +
-      `${TYPE_INSTEAD} Or reply MENU to go back.`,
+      (offerChat
+        ? `${TYPE_INSTEAD} Or reply MENU to go back.`
+        : "Or reply MENU to go back."),
     TRANSACTION_CTA[type],
-    `Reply *TYPE* to ${what} here in the chat, or MENU to go back.`,
+    // Unused: a refused transaction form is replaced by the chat steps' own first question.
+    "Let's do it here in the chat.",
   );
 }
 

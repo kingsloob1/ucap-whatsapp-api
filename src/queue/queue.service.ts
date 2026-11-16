@@ -22,7 +22,6 @@ import {
   PermanentSendError,
   WhatsAppClient,
 } from "../whatsapp/whatsapp.client";
-import { text } from "../whatsapp/messages";
 import type {
   InboundMessage,
   OutboundMessage,
@@ -184,8 +183,9 @@ export class QueueService
 
   /**
    * Sends one message. A form (Flow) WhatsApp refuses for good, as it does
-   * while the business isn't verified (`139000 Blocked by Integrity`), is
-   * replaced by its text fallback, which offers the chat steps instead.
+   * while Meta blocks the account's forms (`139000 Blocked by Integrity`), is
+   * replaced by the chat steps: the conversation moves to them and answers
+   * their first question (nothing if it no longer waits for that form).
    */
   private async sendOrFallBack(
     to: string,
@@ -200,7 +200,8 @@ export class QueueService
       this.logger.warn(
         `The ${message.flow} form to ${to} was refused (${error.message}): sending the chat steps instead`,
       );
-      await this.whatsapp.send(to, text(message.fallback), signal);
+      for (const instead of await this.conversation.formRefused(to, message))
+        await this.whatsapp.send(to, instead, signal);
     }
   }
 

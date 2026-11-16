@@ -357,10 +357,110 @@ describe("menu actions", () => {
     expect(r.body).toContain("Total: ₦45,000.00");
   });
 
-  test("MENU leaves a pending action, CANCEL ends the session", async () => {
+  test("MENU leaves a pending action, CLOSE ends the session", async () => {
     await say(waId, "fund");
     expect((await say(waId, "menu")).step).toBe("menu");
-    expect((await say(waId, "cancel")).step).toBeNull();
+    expect((await say(waId, "close")).step).toBeNull();
+  });
+});
+
+describe("cancelling", () => {
+  const waId = "2348000000007";
+
+  beforeAll(async () => {
+    await onboard(waId, "22233344477");
+    await say(waId, "fund");
+    await say(waId, "50000");
+    await say(waId, "4826");
+  });
+
+  /** Expects the confirmation, then the menu. */
+  function cancelled(r: Awaited<ReturnType<typeof say>>, what: string) {
+    expect(r.step).toBe("menu");
+    expect(r.replies).toHaveLength(2);
+    expect(r.replies[0]).toMatchObject({ kind: "text" });
+    expect(r.replies[0]!.body).toBe(what);
+    expect(r.replies[1]).toMatchObject({ kind: "list" });
+  }
+
+  test("CANCEL while asked for an amount", async () => {
+    await say(waId, "fund");
+    cancelled(
+      await say(waId, "cancel"),
+      "❌ Your wallet funding was cancelled. No money was moved.",
+    );
+  });
+
+  test("other ways to say it, at the PIN: go back, never mind, forget it", async () => {
+    await say(waId, "withdraw");
+    await say(waId, "1000");
+    cancelled(
+      await say(waId, "Go back!"),
+      "❌ Your withdrawal was cancelled. No money was moved.",
+    );
+    await say(waId, "buy");
+    cancelled(
+      await say(waId, "Never mind"),
+      "❌ Your purchase was cancelled. No money was moved.",
+    );
+    await say(waId, "balance");
+    cancelled(
+      await say(waId, "forget it."),
+      "❌ Your balance check was cancelled.",
+    );
+  });
+
+  test("a cancelled request is gone: the PIN no longer approves it", async () => {
+    await say(waId, "withdraw");
+    await say(waId, "1000");
+    await say(waId, "cancel");
+    const r = await say(waId, "4826");
+    expect(r.step).toBe("menu");
+    expect(r.body).not.toContain("withdrawn");
+  });
+
+  test("at the menu there is nothing to cancel", async () => {
+    const r = await say(waId, "cancel");
+    expect(r.step).toBe("menu");
+    expect(r.replies).toHaveLength(1);
+    expect(r.body).toContain("There's nothing to cancel");
+  });
+
+  test("onboarding goes back to the Proceed/Close prompt, and can start again", async () => {
+    const other = "2348000000008";
+    await say(other, "hi");
+    await say(other, tap("onboard:proceed"));
+    await say(other, "22233344488");
+    const r = await say(other, "cancel");
+    expect(r.step).toBe("onboarding_prompt");
+    expect(r.replies[0]!.body).toBe(
+      "❌ Your account setup was cancelled. Nothing was saved.",
+    );
+    expect(r.replies[1]).toMatchObject({
+      kind: "buttons",
+      buttons: [{ id: "onboard:proceed" }, { id: "close" }],
+    });
+    expect((await say(other, tap("onboard:proceed"))).body).toContain(
+      "Step 1 of 4",
+    );
+    expect((await say(other, "cancel")).step).toBe("onboarding_prompt");
+    // At the prompt itself, cancelling ends the conversation.
+    expect((await say(other, "cancel")).step).toBeNull();
+  });
+
+  test("in an edit, BACK returns to the review but CANCEL cancels the setup", async () => {
+    const other = "2348000000009";
+    await say(other, "hi");
+    await say(other, tap("onboard:proceed"));
+    await say(other, "22233344499");
+    await say(other, "25/12/1990");
+    await say(other, "1");
+    await say(other, "4826");
+    await say(other, "4826");
+    await say(other, tap("review:bvn"));
+    expect((await say(other, "go back")).step).toBe("review");
+    await say(other, tap("review:bvn"));
+    expect((await say(other, "cancel")).step).toBe("onboarding_prompt");
   });
 });
 
