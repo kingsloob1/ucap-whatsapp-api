@@ -112,7 +112,8 @@ describe("onboarding in a Flow", () => {
     await say(waId, "hi");
     const replies = await say(waId, tap("onboard:proceed", "Proceed"));
     token = formIn(replies, "onboarding");
-    expect(replies[0]!.body).toContain("Reply *TYPE*");
+    // The chat steps aren't offered up front: a refused form starts them.
+    expect(replies[0]!.body).not.toContain("TYPE");
     expect((await conversation.session(waId))?.step).toBe("onboarding_flow");
     expect(await exchange(token, undefined)).toMatchObject({
       screen: "BVN",
@@ -247,6 +248,10 @@ describe("onboarding in a Flow", () => {
     const other = "2348051110002";
     await say(other, "hi");
     formIn(await say(other, tap("onboard:proceed")), "onboarding");
+    // Writing instead of filling in the form brings it back, now offering TYPE.
+    const reminder = await say(other, "hello?");
+    expect(formIn(reminder, "onboarding")).toBeString();
+    expect(reminder[0]!.body).toContain("Reply *TYPE*");
     const replies = await say(other, "type");
     expect(replies[0]!.body).toContain("Step 1 of 4");
     expect((await conversation.session(other))?.step).toBe("ask_bvn");
@@ -339,6 +344,15 @@ describe("fund, buy and balance in Flows", () => {
           e.message.body.includes("Too many incorrect PIN attempts"),
       ),
     );
+  });
+
+  test("CANCEL while a form is open confirms it, shows the menu and closes the form", async () => {
+    const token = formIn(await say(waId, tap("menu:fund")), "transaction");
+    const replies = await say(waId, "cancel");
+    expect(replies.map((m) => m.kind)).toEqual(["text", "list"]);
+    expect(replies[0]!.body).toContain("Your wallet funding was cancelled");
+    expect((await conversation.session(waId))?.step).toBe("menu");
+    expect((await exchange(token, undefined)).status).toBe(410);
   });
 
   test("TYPE goes back to the chat steps; the PIN still comes as a form", async () => {

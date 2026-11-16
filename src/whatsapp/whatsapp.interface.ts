@@ -55,8 +55,10 @@ export type OutboundMessage =
       /** Ties the form's requests to this conversation (`flow:<token>` in the session cache). */
       token: string;
       /**
-       * Sent as a text instead when WhatsApp refuses the form (e.g. `139000
-       * Blocked by Integrity` for an unverified business): the chat steps.
+       * The text sent instead when WhatsApp refuses the form (e.g. `139000
+       * Blocked by Integrity`): the chat steps' first question, for the
+       * onboarding and PIN forms. A refused transaction form gets its chat
+       * steps from the conversation instead.
        */
       fallback: string;
     };
