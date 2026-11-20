@@ -57,6 +57,8 @@ export type PendingAction =
       details?: BuyDetails;
     }
   | { type: "balance" }
+  // Money from a product back into the wallet.
+  | { type: "liquidate"; productCode: string; amountKobo: number }
   // A paginated view: one member each, so a check on `type` narrows it.
   | { type: "products" }
   | { type: "history" };
@@ -171,6 +173,10 @@ export type Session =
       amountKobo: number;
       details?: BuyDetails;
     }
+  // Liquidating: the product (one with money in it), the amount or ALL, then a confirmation before the PIN.
+  | { step: "liquidate_product" }
+  | { step: "liquidate_amount"; productCode: string }
+  | { step: "liquidate_confirm"; productCode: string; amountKobo: number }
   // A page of a paginated view, after the PIN: Next / Previous move between pages.
   | { step: "browse"; view: BrowseView; page: number }
   // Fund, withdraw or buy in a WhatsApp Flow: the amount (and product) screen

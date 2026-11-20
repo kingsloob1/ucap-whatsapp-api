@@ -17,6 +17,12 @@ export class InsufficientFundsError extends Error {
   }
 }
 
+export class InsufficientHoldingError extends Error {
+  constructor(readonly availableKobo: number) {
+    super("The product holds less than the amount");
+  }
+}
+
 export class DuplicateUserError extends Error {
   constructor(readonly field: "wa_id" | "bvn") {
     super(`A user with this ${field} already exists`);
@@ -205,6 +211,42 @@ export class UsersRepository {
         RETURNING balance_kobo`;
       await tx`INSERT INTO transactions (reference, user_id, type, product_code, amount_kobo, note)
                VALUES (${ref}, ${userId}, 'buy', ${productCode}, ${amountKobo}, ${note})`;
+      return {
+        walletBalanceKobo: Number(wallet[0]!.wallet_balance_kobo),
+        productBalanceKobo: Number(holding[0]!.balance_kobo),
+        reference: ref,
+      };
+    });
+  }
+
+  /** Moves money from a product back into the wallet. Throws {@link InsufficientHoldingError} when the product holds less. */
+  async liquidateProduct(
+    userId: number,
+    productCode: string,
+    amountKobo: number,
+  ): Promise<{
+    walletBalanceKobo: number;
+    productBalanceKobo: number;
+    reference: string;
+  }> {
+    const ref = reference("liquidate");
+    return this.sql.begin(async (tx) => {
+      const holding: { balance_kobo: number }[] = await tx`
+        UPDATE user_products SET balance_kobo = balance_kobo - ${amountKobo}
+        WHERE user_id = ${userId} AND product_code = ${productCode} AND balance_kobo >= ${amountKobo}
+        RETURNING balance_kobo`;
+      if (holding.length === 0) {
+        const rows: { balance_kobo: number }[] = await tx`
+          SELECT balance_kobo FROM user_products WHERE user_id = ${userId} AND product_code = ${productCode}`;
+        throw new InsufficientHoldingError(Number(rows[0]?.balance_kobo ?? 0));
+      }
+      const wallet: { wallet_balance_kobo: number }[] = await tx`
+        UPDATE users SET wallet_balance_kobo = wallet_balance_kobo + ${amountKobo},
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ${userId}
+        RETURNING wallet_balance_kobo`;
+      await tx`INSERT INTO transactions (reference, user_id, type, product_code, amount_kobo)
+               VALUES (${ref}, ${userId}, 'liquidate', ${productCode}, ${amountKobo})`;
       return {
         walletBalanceKobo: Number(wallet[0]!.wallet_balance_kobo),
         productBalanceKobo: Number(holding[0]!.balance_kobo),

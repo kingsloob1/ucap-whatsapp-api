@@ -60,3 +60,13 @@ export const RELATIONSHIPS: readonly string[] = [
   "Sibling",
   "Other",
 ];
+
+/** What a liquidation of each product should warn about, shown before it is confirmed. */
+export const LIQUIDATION_NOTES: Readonly<Record<string, string>> = {
+  MMF: "Money Market Fund liquidations usually reach your wallet within 24 hours. _Demo: paid at once._",
+  FIF: "Liquidating before your term ends can cost some of the interest earned. _Demo: no penalty is charged._",
+  BAL: "Units are sold at the next unit price. _Demo: sold at the value shown._",
+  EQF: "Units are sold at the next unit price. _Demo: sold at the value shown._",
+  STK: "Your shares are sold at the market price when the order is executed. _Demo: sold at the value shown._",
+  TRS: "Taking money out of a trust can need the trustee's approval. _Demo: paid at once._",
+};

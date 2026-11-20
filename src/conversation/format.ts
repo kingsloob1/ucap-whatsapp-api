@@ -36,6 +36,8 @@ export function actionSummary(action: PendingAction): string {
     }
     case "balance":
       return "View your wallet and investment balances";
+    case "liquidate":
+      return `Liquidate ${formatNaira(action.amountKobo)} of ${productTitle(action.productCode)} into your wallet`;
     case "products":
       return "View your products and what you hold in each";
     case "history":
