@@ -22,6 +22,13 @@
       "when": 1795171489193,
       "tag": "20261120104449_transaction_note",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795172088327,
+      "tag": "20261120105448_liquidate_transactions",
+      "breakpoints": true
     }
   ]
 }

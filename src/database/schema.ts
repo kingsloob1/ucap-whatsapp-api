@@ -63,7 +63,9 @@ export const transactions = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    type: text("type", { enum: ["fund", "withdraw", "buy"] }).notNull(),
+    type: text("type", {
+      enum: ["fund", "withdraw", "buy", "liquidate"],
+    }).notNull(),
     productCode: text("product_code"),
     amountKobo: integer("amount_kobo").notNull(),
     /** What was bought, for the history: e.g. "20 DANGCEM shares at ₦480.00". */
@@ -75,7 +77,7 @@ export const transactions = sqliteTable(
     index("ix_transactions_user").on(t.userId, t.createdAt),
     check(
       "transactions_type_known",
-      sql`${t.type} IN ('fund', 'withdraw', 'buy')`,
+      sql`${t.type} IN ('fund', 'withdraw', 'buy', 'liquidate')`,
     ),
     check("transactions_amount_positive", sql`${t.amountKobo} > 0`),
   ],

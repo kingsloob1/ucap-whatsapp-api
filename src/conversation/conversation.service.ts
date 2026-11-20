@@ -5,6 +5,7 @@ import { APP_CONFIG, type AppConfig } from "../config";
 import {
   DuplicateUserError,
   InsufficientFundsError,
+  InsufficientHoldingError,
   UsersRepository,
 } from "../database/users.repository";
 import { SessionsRepository } from "../database/sessions.repository";
@@ -22,6 +23,7 @@ import {
 } from "./parsers";
 import {
   FIF_TENORS,
+  LIQUIDATION_NOTES,
   MAX_SHARES,
   RELATIONSHIPS,
   STOCKS,
@@ -121,6 +123,7 @@ const CHOICE = {
   balance: "menu:balance",
   withdraw: "menu:withdraw",
   buy: "menu:buy",
+  liquidate: "menu:liquidate",
   products: "menu:products",
   history: "menu:history",
   /** The paginated views' buttons; Menu is the MENU command itself. */
@@ -130,10 +133,14 @@ const CHOICE = {
   /** The purchase confirmation's buttons; Cancel is the CANCEL command itself. */
   confirmBuy: "buy:confirm",
   changeBuy: "buy:change",
+  confirmLiquidate: "liquidate:confirm",
+  changeLiquidate: "liquidate:change",
   cancel: "cancel",
 } as const;
 
 const CONFIRM_WORDS = new Set(["confirm", "yes", "y", "ok", "okay", "proceed"]);
+/** What a user types to liquidate everything a product holds. */
+const ALL_WORDS = new Set(["all", "everything", "all of it", "full", "max"]);
 const CHANGE_WORDS = new Set([
   "change",
   "change amount",
@@ -406,6 +413,12 @@ export class ConversationService {
         return this.buyAmount(session, user!, ctx);
       case "buy_confirm":
         return this.buyConfirm(session, user!, ctx);
+      case "liquidate_product":
+        return this.liquidateProduct(user!, ctx);
+      case "liquidate_amount":
+        return this.liquidateAmount(session, user!, ctx);
+      case "liquidate_confirm":
+        return this.liquidateConfirm(session, user!, ctx);
       case "transaction":
         return this.transaction(session, user!, ctx);
       case "browse":
@@ -469,7 +482,8 @@ export class ConversationService {
     const what = cancelledWhat(session);
     if (!what)
       return this.menu("There's nothing to cancel. What would you like to do?");
-    const money = what === "fund" || what === "withdraw" || what === "buy";
+    const money =
+      what !== "balance" && what !== "products" && what !== "history";
     return this.menu("What would you like to do next?", [
       text(
         `❌ ${CANCELLED[what]} was cancelled.${money ? " No money was moved." : ""}`,
@@ -978,6 +992,11 @@ export class ConversationService {
                   description: "Invest from your wallet in a product",
                 },
                 {
+                  id: CHOICE.liquidate,
+                  title: "Liquidate",
+                  description: "Move money from a product back to your wallet",
+                },
+                {
                   id: CHOICE.products,
                   title: "My products",
                   description: "Your products and what you hold in each",
@@ -1011,9 +1030,13 @@ export class ConversationService {
       [CHOICE.balance, ["2", "balance", "check balance"]],
       [CHOICE.withdraw, ["3", "withdraw"]],
       [CHOICE.buy, ["4", "buy", "buy products"]],
-      [CHOICE.products, ["5", "products", "my products"]],
-      [CHOICE.history, ["6", "history", "transactions", "transaction history"]],
-      [CHOICE.close, ["7", "close session"]],
+      [
+        CHOICE.liquidate,
+        ["5", "liquidate", "sell", "redeem", "liquidate investment"],
+      ],
+      [CHOICE.products, ["6", "products", "my products"]],
+      [CHOICE.history, ["7", "history", "transactions", "transaction history"]],
+      [CHOICE.close, ["8", "close session"]],
     ]);
 
     switch (choice) {
@@ -1029,6 +1052,8 @@ export class ConversationService {
         return this.startTransaction("withdraw", user, ctx);
       case CHOICE.buy:
         return this.startTransaction("buy", user, ctx);
+      case CHOICE.liquidate:
+        return this.startLiquidation(user);
       case CHOICE.products:
         return this.askPin(
           ctx,
@@ -1444,6 +1469,141 @@ export class ConversationService {
     };
   }
 
+  /* --------------------------------------------------------- liquidating */
+
+  /** The products with money in them, to choose one to liquidate. */
+  private async startLiquidation(user: User): Promise<Transition> {
+    const holdings = (await this.users.holdings(user.id)).filter(
+      (h) => h.balanceKobo > 0,
+    );
+    if (holdings.length === 0)
+      return this.menu("What would you like to do?", [
+        text(
+          "You don't have any investments to liquidate yet. Choose *Buy products* to invest.",
+        ),
+      ]);
+    return {
+      next: { step: "liquidate_product" },
+      replies: [liquidationPicker(holdings)],
+    };
+  }
+
+  private async liquidateProduct(
+    user: User,
+    { answer }: Context,
+  ): Promise<Transition> {
+    const holdings = (await this.users.holdings(user.id)).filter(
+      (h) => h.balanceKobo > 0,
+    );
+    const code = answer.startsWith("liquidate:")
+      ? answer.slice("liquidate:".length).toUpperCase()
+      : /^\d+$/.test(answer)
+        ? holdings[Number(answer) - 1]?.productCode
+        : holdings.find(
+            (h) =>
+              productTitle(h.productCode).toLowerCase() === answer ||
+              h.productCode.toLowerCase() === answer,
+          )?.productCode;
+    const holding = holdings.find((h) => h.productCode === code);
+    if (!holding) {
+      if (holdings.length === 0) return this.startLiquidation(user);
+      return {
+        next: { step: "liquidate_product" },
+        replies: [
+          liquidationPicker(holdings, "Please choose a product from the list."),
+        ],
+      };
+    }
+    return {
+      next: { step: "liquidate_amount", productCode: holding.productCode },
+      replies: [
+        text(liquidationPrompt(holding.productCode, holding.balanceKobo)),
+      ],
+    };
+  }
+
+  private async liquidateAmount(
+    session: Extract<Session, { step: "liquidate_amount" }>,
+    user: User,
+    ctx: Context,
+  ): Promise<Transition> {
+    const held = await this.holdingOf(user, session.productCode);
+    if (held === 0) return this.startLiquidation(user);
+    let amountKobo: number;
+    if (ALL_WORDS.has(asPhrase(ctx.answer))) amountKobo = held;
+    else {
+      const amount = parseAmount(ctx.input.text);
+      if (!amount.ok) return { next: session, replies: [text(amount.error)] };
+      amountKobo = amount.value;
+    }
+    if (amountKobo > held)
+      return {
+        next: session,
+        replies: [
+          text(
+            `You hold ${formatNaira(held)} in ${productTitle(session.productCode)}. Please send a smaller amount, or *ALL* for everything.`,
+          ),
+        ],
+      };
+    const wallet = await this.users.walletBalance(user.id);
+    return {
+      next: {
+        step: "liquidate_confirm",
+        productCode: session.productCode,
+        amountKobo,
+      },
+      replies: [
+        liquidationConfirmation(session.productCode, amountKobo, held, wallet),
+      ],
+    };
+  }
+
+  /** Confirm asks for the PIN; Change goes back to the amount. */
+  private async liquidateConfirm(
+    session: Extract<Session, { step: "liquidate_confirm" }>,
+    user: User,
+    ctx: Context,
+  ): Promise<Transition> {
+    const phrase = asPhrase(ctx.answer);
+    if (ctx.answer === CHOICE.confirmLiquidate || CONFIRM_WORDS.has(phrase)) {
+      const action: PendingAction = {
+        type: "liquidate",
+        productCode: session.productCode,
+        amountKobo: session.amountKobo,
+      };
+      return this.askPin(
+        ctx,
+        action,
+        `*${actionSummary(action)}*\n\nEnter your 4-digit PIN to approve, or reply CANCEL.`,
+      );
+    }
+    const held = await this.holdingOf(user, session.productCode);
+    if (ctx.answer === CHOICE.changeLiquidate || CHANGE_WORDS.has(phrase))
+      return {
+        next: { step: "liquidate_amount", productCode: session.productCode },
+        replies: [text(liquidationPrompt(session.productCode, held))],
+      };
+    return {
+      next: session,
+      replies: [
+        liquidationConfirmation(
+          session.productCode,
+          session.amountKobo,
+          held,
+          await this.users.walletBalance(user.id),
+        ),
+      ],
+    };
+  }
+
+  private async holdingOf(user: User, productCode: string): Promise<number> {
+    return (
+      (await this.users.holdings(user.id)).find(
+        (h) => h.productCode === productCode,
+      )?.balanceKobo ?? 0
+    );
+  }
+
   /** Asks for the PIN that approves `action`: in the PIN Flow when it's on, or typed in the chat. */
   private async askPin(
     ctx: Context,
@@ -1652,8 +1812,27 @@ export class ConversationService {
         }
         case "balance":
           return this.balances(user);
+        case "liquidate": {
+          const result = await this.users.liquidateProduct(
+            user.id,
+            action.productCode,
+            action.amountKobo,
+          );
+          const title = productTitle(action.productCode);
+          return text(
+            `✅ ${formatNaira(action.amountKobo)} of ${title} was liquidated into your wallet.\n\n` +
+              `${title}: ${formatNaira(result.productBalanceKobo)}\n` +
+              `Wallet balance: ${formatNaira(result.walletBalanceKobo)}\nRef: ${result.reference}\n\n` +
+              `_Demo: no real redemption was made._\n\n${PRIVACY_TIP}`,
+          );
+        }
       }
     } catch (error) {
+      if (error instanceof InsufficientHoldingError) {
+        return text(
+          `❌ That product now holds ${formatNaira(error.availableKobo)}, which isn't enough for this request. Nothing was moved.`,
+        );
+      }
       if (error instanceof InsufficientFundsError) {
         return text(
           `❌ Your wallet balance is ${formatNaira(error.availableKobo)}, which isn't enough for this request. Nothing was charged.`,
@@ -1710,6 +1889,7 @@ const CANCELLED = {
   balance: "Your balance check",
   products: "Viewing your products",
   history: "Viewing your transaction history",
+  liquidate: "Your liquidation",
 } as const satisfies Record<PendingAction["type"], string>;
 
 /** The request a session of an onboarded user has in progress, or null at the menu. */
@@ -1729,6 +1909,10 @@ function cancelledWhat(session: Session): PendingAction["type"] | null {
     case "buy_amount":
     case "buy_confirm":
       return "buy";
+    case "liquidate_product":
+    case "liquidate_amount":
+    case "liquidate_confirm":
+      return "liquidate";
     case "transaction":
       return session.type;
     case "authorize":
@@ -1740,12 +1924,14 @@ function cancelledWhat(session: Session): PendingAction["type"] | null {
 
 /** One transaction in the history: what it was, the amount, when, and its reference. */
 function transactionLine(t: TransactionRecord): string {
-  const what =
-    t.type === "fund"
-      ? `*Wallet funded* · +${formatNaira(t.amountKobo)}`
-      : t.type === "withdraw"
-        ? `*Withdrawal* · −${formatNaira(t.amountKobo)}`
-        : `*Bought ${t.productCode ? productTitle(t.productCode) : "a product"}* · ${formatNaira(t.amountKobo)}`;
+  const product = t.productCode ? productTitle(t.productCode) : "a product";
+  const amount = formatNaira(t.amountKobo);
+  const what = {
+    fund: `*Wallet funded* · +${amount}`,
+    withdraw: `*Withdrawal* · −${amount}`,
+    buy: `*Bought ${product}* · ${amount}`,
+    liquidate: `*Liquidated ${product}* · +${amount} to wallet`,
+  }[t.type];
   const status = t.status === "successful" ? "" : ` (${t.status})`;
   const note = t.note ? `\n${t.note}` : "";
   return `${what}${status}${note}\n${formatWhen(t.createdAt)} · Ref ${t.reference}`;
@@ -1858,6 +2044,53 @@ function productPicker(
       })),
     },
   ]);
+}
+
+function liquidationPicker(
+  holdings: { productCode: string; balanceKobo: number }[],
+  body = "Which investment would you like to liquidate? The money goes back to your wallet.",
+): OutboundMessage {
+  return list(body, "Investments", [
+    {
+      title: "Your investments",
+      rows: holdings.map((h) => ({
+        id: `liquidate:${h.productCode}`,
+        title: productTitle(h.productCode),
+        description: `${formatNaira(h.balanceKobo)} invested`,
+      })),
+    },
+  ]);
+}
+
+function liquidationPrompt(productCode: string, heldKobo: number): string {
+  const note = LIQUIDATION_NOTES[productCode];
+  return (
+    `*${productTitle(productCode)}*\nYou hold *${formatNaira(heldKobo)}*.\n\n` +
+    (note ? `${note}\n\n` : "") +
+    "How much would you like to liquidate into your wallet? Send the amount in naira, or *ALL* for everything."
+  );
+}
+
+function liquidationConfirmation(
+  productCode: string,
+  amountKobo: number,
+  heldKobo: number,
+  walletKobo: number,
+): OutboundMessage {
+  const title = productTitle(productCode);
+  const note = LIQUIDATION_NOTES[productCode];
+  return buttons(
+    `*Please confirm your liquidation*\n\n` +
+      `Product: ${title}\nAmount: *${formatNaira(amountKobo)}*\n` +
+      `Left in ${title}: ${formatNaira(heldKobo - amountKobo)}\n` +
+      `Wallet after: ${formatNaira(walletKobo + amountKobo)}` +
+      (note ? `\n\n${note}` : ""),
+    [
+      { id: CHOICE.confirmLiquidate, title: "Confirm" },
+      { id: CHOICE.changeLiquidate, title: "Change amount" },
+      { id: CHOICE.cancel, title: "Cancel" },
+    ],
+  );
 }
 
 function tenorPicker(): OutboundMessage {

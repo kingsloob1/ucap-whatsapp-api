@@ -522,6 +522,120 @@ describe("buying, product by product", () => {
   });
 });
 
+describe("liquidating", () => {
+  const waId = "2348000000014";
+  const PIN = "4826";
+
+  beforeAll(async () => {
+    await onboard(waId, "22255566655"); // Money Market Fund and Stocks, ₦0 in each
+    await say(waId, "fund");
+    await say(waId, "100000");
+    await say(waId, PIN);
+  });
+
+  test("with nothing invested, there is nothing to liquidate", async () => {
+    const r = await say(waId, tap("menu:liquidate", "Liquidate"));
+    expect(r.step).toBe("menu");
+    expect(r.replies[0]!.body).toContain(
+      "You don't have any investments to liquidate yet",
+    );
+  });
+
+  test("a product, an amount, the confirmation, then the PIN moves money back to the wallet", async () => {
+    for (const [product, amount] of [
+      ["product:EQF", "30000"],
+      ["product:FIF", "20000"],
+    ] as const) {
+      await say(waId, "buy");
+      await say(waId, tap(product));
+      if (product === "product:FIF") await say(waId, tap("tenor:90"));
+      await say(waId, amount);
+      await say(waId, "confirm");
+      await say(waId, PIN);
+    }
+    const user = (await users.findByWaId(waId))!;
+    expect(await users.walletBalance(user.id)).toBe(5_000_000);
+
+    // Only products with money in them are offered (not the ₦0 ones from onboarding).
+    let r = await say(waId, "5");
+    expect(r.step).toBe("liquidate_product");
+    const m = r.replies[0]!;
+    expect(
+      m.kind === "list" && m.sections[0]!.rows.map((row) => row.id),
+    ).toEqual(["liquidate:EQF", "liquidate:FIF"]);
+
+    r = await say(waId, tap("liquidate:FIF", "Fixed Income Fund"));
+    expect(r.step).toBe("liquidate_amount");
+    expect(r.body).toContain("You hold *₦20,000.00*");
+    expect(r.body).toContain("can cost some of the interest earned");
+
+    r = await say(waId, "25000");
+    expect(r.step).toBe("liquidate_amount");
+    expect(r.body).toContain("You hold ₦20,000.00 in Fixed Income Fund");
+
+    r = await say(waId, "5000");
+    expect(r.step).toBe("liquidate_confirm");
+    expect(r.body).toContain("Amount: *₦5,000.00*");
+    expect(r.body).toContain("Left in Fixed Income Fund: ₦15,000.00");
+    expect(r.body).toContain("Wallet after: ₦55,000.00");
+
+    expect((await say(waId, tap("liquidate:change"))).step).toBe(
+      "liquidate_amount",
+    );
+    await say(waId, "ALL");
+    r = await say(waId, tap("liquidate:confirm", "Confirm"));
+    expect(r.step).toBe("authorize");
+    expect(r.body).toContain(
+      "Liquidate ₦20,000.00 of Fixed Income Fund into your wallet",
+    );
+    r = await say(waId, PIN);
+    expect(r.body).toContain(
+      "✅ ₦20,000.00 of Fixed Income Fund was liquidated into your wallet",
+    );
+    expect(r.body).toContain("Fixed Income Fund: ₦0.00");
+    expect(r.body).toContain("Wallet balance: ₦70,000.00");
+    expect(r.body).toContain("🔒 *Keep your investments private:*");
+    expect(await users.walletBalance(user.id)).toBe(7_000_000);
+  });
+
+  test("the history shows it, and an emptied product is no longer offered", async () => {
+    await say(waId, "history");
+    let r = await say(waId, PIN);
+    expect(r.body).toContain(
+      "1. *Liquidated Fixed Income Fund* · +₦20,000.00 to wallet",
+    );
+    r = await say(waId, tap("menu:liquidate"));
+    const m = r.replies[0]!;
+    expect(
+      m.kind === "list" && m.sections[0]!.rows.map((row) => row.id),
+    ).toEqual(["liquidate:EQF"]);
+    expect(m.kind === "list" && m.sections[0]!.rows[0]!.description).toBe(
+      "₦30,000.00 invested",
+    );
+  });
+
+  test("CANCEL on the confirmation moves nothing", async () => {
+    await say(waId, tap("liquidate:EQF"));
+    await say(waId, "all");
+    const r = await say(waId, tap("cancel", "Cancel"));
+    expect(r.replies[0]!.body).toBe(
+      "❌ Your liquidation was cancelled. No money was moved.",
+    );
+    const user = (await users.findByWaId(waId))!;
+    expect(
+      (await users.holdings(user.id)).find((h) => h.productCode === "EQF")
+        ?.balanceKobo,
+    ).toBe(3_000_000);
+  });
+
+  test("the repository refuses more than the product holds", async () => {
+    const user = (await users.findByWaId(waId))!;
+    await expect(
+      users.liquidateProduct(user.id, "EQF", 3_000_001),
+    ).rejects.toMatchObject({ availableKobo: 3_000_000 });
+  });
+});
+
 describe("privacy reminders", () => {
   test("when onboarding starts, when the account is ready, and after a transaction", async () => {
     const waId = "2348000000013";
@@ -578,7 +692,7 @@ describe("my products and transaction history", () => {
     }
   });
 
-  test("the menu lists both, after Buy products", async () => {
+  test("the menu lists both, after Buy products and Liquidate", async () => {
     const r = await say(waId, "menu");
     const menu = r.replies[0]!;
     expect(menu.kind).toBe("list");
@@ -589,6 +703,7 @@ describe("my products and transaction history", () => {
       "menu:balance",
       "menu:withdraw",
       "menu:buy",
+      "menu:liquidate",
       "menu:products",
       "menu:history",
       "close",

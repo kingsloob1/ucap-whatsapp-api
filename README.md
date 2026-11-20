@@ -181,6 +181,11 @@ stateDiagram-v2
   BuyAmount --> BuyConfirm: up to the wallet balance
   BuyConfirm --> BuyAmount: Change amount
   BuyConfirm --> Authorize: Confirm
+  Menu --> LiquidateProduct: Liquidate
+  LiquidateProduct --> LiquidateAmount: a product with money in it
+  LiquidateAmount --> LiquidateConfirm: up to what it holds, or ALL
+  LiquidateConfirm --> LiquidateAmount: Change amount
+  LiquidateConfirm --> Authorize: Confirm
   Authorize --> Menu: PIN ok (form or typed), or 3 wrong PINs
   note right of Menu: CANCEL in any transaction step confirms it and returns here
   note right of OnboardingPrompt: CANCEL in any onboarding step returns here
@@ -208,7 +213,7 @@ stateDiagram-v2
     PIN (hidden), with **Confirm & create** and a row to change each answer (or reply `1`–`5`).
     An edit is validated like the original step and returns to the review; `BACK` keeps the current
     value. A new PIN is confirmed again. The account is created only on **Confirm & create**.
-- **Menu** (an interactive list, or reply `1`–`7`):
+- **Menu** (an interactive list, or reply `1`–`8`):
   - **Fund wallet**: amount, then PIN.
   - **Check balance**: PIN, then the wallet, each product and the total.
   - **Withdraw**: amount (up to the wallet balance), then PIN.
@@ -230,6 +235,13 @@ stateDiagram-v2
     year). What was chosen is saved with the transaction (`transactions.note`) and shown in the
     history, e.g. "40 MTNN shares at ₦230.00" or "Simple will for Chidi Okafor (Spouse)".
 
+  - **Liquidate**: one of the products with money in it, an amount or `ALL`, a confirmation (the
+    amount, what is left in the product and the wallet balance after, with **Confirm**, **Change
+    amount** and **Cancel**), then the PIN. The money moves from the product back to the wallet,
+    and the history shows "Liquidated … +₦… to wallet". Each product's confirmation carries a note
+    (an early Fixed Income liquidation can cost interest, shares sell at the market price, a trust
+    may need the trustee's approval); in the demo none is charged or enforced. The notes are in
+    `src/conversation/investments.constants.ts`.
   - **My products**: PIN, then the products the user holds, each with its amount, and the total
     invested.
   - **Transaction history**: PIN, then the user's fundings, withdrawals and purchases, newest first,
@@ -241,7 +253,7 @@ stateDiagram-v2
   - **Close session**.
 - **Amounts:** `5000`, `5,000`, `₦5,000.50`, `N5000` and `5k` all work; the range is ₦100 to ₦10,000,000.
 - **Privacy reminders:** when onboarding starts, on the account-ready message and after every
-  completed fund, withdrawal or purchase, users are reminded to lock the chat (WhatsApp's **Chat
+  completed fund, withdrawal, purchase or liquidation, users are reminded to lock the chat (WhatsApp's **Chat
   lock**) and clear it (**Clear chat**), so no one else using the phone can see their investments.
   The bot can't do either for them: WhatsApp has no API for it.
 - **Everywhere:**
