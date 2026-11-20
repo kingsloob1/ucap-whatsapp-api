@@ -292,8 +292,7 @@ describe("menu actions", () => {
     expect(r.step).toBe("menu");
     expect(r.body).toContain("wallet is empty");
 
-    await say(waId, tap("menu:buy"));
-    r = await say(waId, tap("product:EQF"));
+    r = await say(waId, tap("menu:buy"));
     expect(r.step).toBe("menu");
     expect(r.body).toContain("fund your wallet first");
   });
@@ -330,9 +329,14 @@ describe("menu actions", () => {
     await say(waId, tap("menu:buy"));
     expect((await say(waId, tap("product:EQF"))).step).toBe("buy_amount");
     expect((await say(waId, "60000")).step).toBe("buy_amount"); // more than the wallet holds
-    await say(waId, "20,000");
+    expect((await say(waId, "20,000")).step).toBe("buy_confirm");
+    expect((await say(waId, tap("buy:confirm", "Confirm"))).step).toBe(
+      "authorize",
+    );
     const r = await say(waId, "4826");
     expect(r.body).toContain("You bought ₦20,000.00 of Equity Fund");
+    expect(r.body).toContain("About 10,675.77 units at ₦1.8734");
+    expect(r.body).toContain("🔒 *Keep your investments private:*");
     const user = (await users.findByWaId(waId))!;
     expect(await users.walletBalance(user.id)).toBe(3_000_000);
     expect(
@@ -364,6 +368,179 @@ describe("menu actions", () => {
   });
 });
 
+describe("buying, product by product", () => {
+  const waId = "2348000000012";
+  const PIN = "4826";
+  const ids = (r: Awaited<ReturnType<typeof say>>) => {
+    const m = r.replies[0]!;
+    return m.kind === "buttons"
+      ? m.buttons.map((b) => b.id)
+      : m.kind === "list"
+        ? m.sections.flatMap((sec) => sec.rows.map((row) => row.id))
+        : [];
+  };
+
+  beforeAll(async () => {
+    await onboard(waId, "22255566633");
+    await say(waId, "fund");
+    await say(waId, "1000000");
+    await say(waId, PIN);
+  });
+
+  test("Money Market Fund: the rate and an example, then the daily interest to confirm", async () => {
+    await say(waId, "buy");
+    let r = await say(waId, tap("product:MMF"));
+    expect(r.step).toBe("buy_amount");
+    expect(r.body).toContain("Current rate: *18.50% a year*");
+    expect(r.body).toContain(
+      "₦100,000.00 earns about *₦50.68 a day*, or ₦1,520.55 in 30 days",
+    );
+
+    r = await say(waId, "50000");
+    expect(r.step).toBe("buy_confirm");
+    expect(r.body).toContain("Amount: *₦50,000.00*");
+    expect(r.body).toContain(
+      "Expected interest: about *₦25.34 a day* (₦760.27 in 30 days)",
+    );
+    expect(ids(r)).toEqual(["buy:confirm", "buy:change", "cancel"]);
+
+    // Change amount asks again; the new amount gets its own quote.
+    expect((await say(waId, tap("buy:change", "Change amount"))).step).toBe(
+      "buy_amount",
+    );
+    r = await say(waId, "10000");
+    expect(r.body).toContain("about *₦5.07 a day*");
+
+    r = await say(waId, tap("buy:confirm", "Confirm"));
+    expect(r.step).toBe("authorize");
+    expect(r.body).toContain(
+      "Buy ₦10,000.00 of Money Market Fund from your wallet (18.50% a year, about ₦5.07 a day)",
+    );
+    r = await say(waId, PIN);
+    expect(r.body).toContain("You bought ₦10,000.00 of Money Market Fund");
+  });
+
+  test("Fixed Income Fund: the term sets the rate; interest at maturity", async () => {
+    await say(waId, "buy");
+    let r = await say(waId, tap("product:FIF"));
+    expect(r.step).toBe("buy_tenor");
+    expect(ids(r)).toEqual(["tenor:90", "tenor:180", "tenor:365"]);
+    expect(r.body).toContain("• 180 days: 16.25% a year");
+    expect((await say(waId, "45 days")).step).toBe("buy_tenor");
+
+    r = await say(waId, tap("tenor:180", "180 days"));
+    expect(r.step).toBe("buy_amount");
+    expect(r.body).toContain(
+      "₦100,000.00 for 180 days earns about *₦8,013.70*",
+    );
+
+    r = await say(waId, "20000");
+    expect(r.body).toMatch(/Term: 180 days, ending \d{1,2} \w{3} \d{4}/);
+    expect(r.body).toContain("Expected interest: about *₦1,602.74*");
+    expect(r.body).toContain("Paid back at the end: about *₦21,602.74*");
+    await say(waId, "cancel");
+  });
+
+  test("Balanced Fund: unit price, past return and risk; the units an amount buys", async () => {
+    await say(waId, "buy");
+    let r = await say(waId, tap("product:BAL"));
+    expect(r.body).toContain("Unit price: *₦2.4512*");
+    expect(r.body).toContain("Past year's return: 21.40%");
+    expect(r.body).toContain("Risk: Medium");
+    expect(r.body).toContain("₦100,000.00 buys about 40,796.34 units");
+    r = await say(waId, "10000");
+    expect(r.body).toContain("Units: about *4,079.63*");
+    await say(waId, "cancel");
+  });
+
+  test("Stocks: the stock, then a whole number of shares the wallet can pay for", async () => {
+    await say(waId, "buy");
+    let r = await say(waId, tap("product:STK"));
+    expect(r.step).toBe("buy_stock");
+    expect(ids(r)).toContain("stock:MTNN");
+
+    r = await say(waId, tap("stock:MTNN", "MTN Nigeria"));
+    expect(r.step).toBe("buy_shares");
+    expect(r.body).toContain("Price: *₦230.00 a share*");
+    expect(r.body).toContain("can buy up to");
+
+    for (const bad of ["ten", "0", "2.5"])
+      expect((await say(waId, bad)).body).toContain("whole number of shares");
+    r = await say(waId, "99999");
+    expect(r.step).toBe("buy_shares");
+    expect(r.body).toContain("more than your wallet balance");
+
+    r = await say(waId, "40");
+    expect(r.step).toBe("buy_confirm");
+    expect(r.body).toContain("Stock: MTN Nigeria (MTNN)");
+    expect(r.body).toContain("Shares: 40 × ₦230.00");
+    expect(r.body).toContain("Total: *₦9,200.00*");
+    const m = r.replies[0]!;
+    expect(m.kind === "buttons" && m.buttons[1]!.title).toBe("Change shares");
+
+    expect((await say(waId, "change")).step).toBe("buy_shares");
+    await say(waId, "40");
+    await say(waId, "confirm");
+    r = await say(waId, PIN);
+    expect(r.body).toContain("You bought ₦9,200.00 of Stocks");
+    expect(r.body).toContain("40 MTNN shares at ₦230.00");
+  });
+
+  test("Trustees: the service, the beneficiary's full name and relationship, then the amount", async () => {
+    await say(waId, "buy");
+    let r = await say(waId, tap("product:TRS"));
+    expect(r.step).toBe("buy_trust");
+    expect(ids(r)).toEqual(["trust:0", "trust:1", "trust:2", "trust:3"]);
+
+    r = await say(waId, tap("trust:0", "Simple will"));
+    expect(r.step).toBe("buy_beneficiary");
+    expect(r.body).toContain("main beneficiary of your will");
+    expect((await say(waId, "Chidi")).body).toContain("first name and surname");
+    expect((await say(waId, "12345")).body).toContain("in letters");
+
+    r = await say(waId, "  Chidi   Okafor ");
+    expect(r.step).toBe("buy_relationship");
+    expect(r.body).toContain("What is Chidi Okafor to you?");
+    expect((await say(waId, "cousin")).step).toBe("buy_relationship");
+
+    r = await say(waId, tap("rel:spouse", "Spouse"));
+    expect(r.step).toBe("buy_amount");
+    expect(r.body).toContain("your *simple will* for Chidi Okafor");
+
+    r = await say(waId, "25000");
+    expect(r.body).toContain("Service: Simple will");
+    expect(r.body).toContain("Beneficiary: Chidi Okafor (Spouse)");
+
+    // Cancel on the confirmation buys nothing.
+    const user = (await users.findByWaId(waId))!;
+    const before = await users.walletBalance(user.id);
+    r = await say(waId, tap("cancel", "Cancel"));
+    expect(r.replies[0]!.body).toBe(
+      "❌ Your purchase was cancelled. No money was moved.",
+    );
+    expect(await users.walletBalance(user.id)).toBe(before);
+  });
+});
+
+describe("privacy reminders", () => {
+  test("when onboarding starts, when the account is ready, and after a transaction", async () => {
+    const waId = "2348000000013";
+    await say(waId, "hi");
+    let r = await say(waId, tap("onboard:proceed"));
+    expect(r.body).toContain("🔒 You'll share your BVN and create a PIN here");
+    expect(r.body).toContain("*Chat lock*");
+
+    r = await onboard(waId, "22255566644");
+    expect(r.replies[0]!.body).toContain("Your InvestNow account is ready");
+    expect(r.replies[0]!.body).toContain("🔒 *Keep your investments private:*");
+
+    await say(waId, "fund");
+    await say(waId, "5000");
+    r = await say(waId, "4826");
+    expect(r.body).toContain("*Clear chat*");
+  });
+});
+
 describe("my products and transaction history", () => {
   const waId = "2348000000010";
   const PIN = "4826";
@@ -384,10 +561,19 @@ describe("my products and transaction history", () => {
     await say(waId, "60000");
     await say(waId, PIN);
     // A purchase in each of the six products: 7 transactions, 6 holdings.
-    for (const n of ["1", "2", "3", "4", "5", "6"]) {
+    const steps: Record<string, string[]> = {
+      "1": ["1000"], // Money Market Fund
+      "2": ["90", "2000"], // Fixed Income Fund: the term, then the amount
+      "3": ["3000"], // Balanced Fund
+      "4": ["4000"], // Equity Fund
+      "5": ["1", "10"], // Stocks: Dangote Cement, 10 shares (₦4,800.00)
+      "6": ["3", "Ada Obi", "2", "6000"], // Trustees: education trust for a child
+    };
+    for (const [n, answers] of Object.entries(steps)) {
       await say(waId, "buy");
       await say(waId, n);
-      await say(waId, `${n}000`);
+      for (const a of answers) await say(waId, a);
+      await say(waId, "confirm");
       await say(waId, PIN);
     }
   });
@@ -418,7 +604,7 @@ describe("my products and transaction history", () => {
     expect(r.step).toBe("browse");
     expect(r.body).toContain("📊 *Your products*");
     expect(r.body).toContain("1. *Money Market Fund*\n₦1,000.00");
-    expect(r.body).toContain("*Total invested: ₦21,000.00*");
+    expect(r.body).toContain("*Total invested: ₦20,800.00*");
     expect(r.body).not.toContain("6.");
     expect(footer(r)).toBe("Page 1 of 2");
     expect(nav(r)).toEqual(["page:next", "menu"]);
@@ -436,7 +622,10 @@ describe("my products and transaction history", () => {
     let r = await say(waId, PIN);
     expect(r.step).toBe("browse");
     expect(r.body).toContain("🧾 *Transaction history*");
-    expect(r.body).toContain("1. *Bought Trustees* · ₦6,000.00");
+    expect(r.body).toContain(
+      "1. *Bought Trustees* · ₦6,000.00\nEducation trust for Ada Obi (Child)\n",
+    );
+    expect(r.body).toContain("10 DANGCEM shares at ₦480.00");
     expect(r.body).toMatch(/\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Ref BUY-/);
     expect(r.body).not.toContain("Wallet funded");
     expect(footer(r)).toBe("Page 1 of 2");

@@ -15,15 +15,35 @@ import {
   parseAmount,
   parseBvn,
   parseDateOfBirth,
+  parseFullName,
   parseNewPin,
   parseSelection,
+  MAX_AMOUNT_KOBO,
 } from "./parsers";
+import {
+  FIF_TENORS,
+  MAX_SHARES,
+  RELATIONSHIPS,
+  STOCKS,
+  TRUST_SERVICES,
+} from "./investments.constants";
+import {
+  amountPrompt,
+  buyNote,
+  buyQuote,
+  defaultDetails,
+  sharesPrompt,
+  stockByTicker,
+  tenorPrompt,
+} from "./investments.service";
 import { PRODUCTS, productByCode, productTitle } from "./products";
 import {
   BVN_USSD,
   flowKey,
   INVESTNOW_USSD,
   MAX_PIN_ATTEMPTS,
+  ONBOARDING_PRIVACY_TIP,
+  PRIVACY_TIP,
   SESSION_CACHE,
   sessionKey,
   ussd,
@@ -44,6 +64,7 @@ import type {
 } from "../whatsapp/whatsapp.interface";
 import type {
   BrowseView,
+  BuyDetails,
   Contact,
   Context,
   MessageMeta,
@@ -106,7 +127,19 @@ const CHOICE = {
   next: "page:next",
   previous: "page:previous",
   menu: "menu",
+  /** The purchase confirmation's buttons; Cancel is the CANCEL command itself. */
+  confirmBuy: "buy:confirm",
+  changeBuy: "buy:change",
+  cancel: "cancel",
 } as const;
+
+const CONFIRM_WORDS = new Set(["confirm", "yes", "y", "ok", "okay", "proceed"]);
+const CHANGE_WORDS = new Set([
+  "change",
+  "change amount",
+  "change shares",
+  "edit",
+]);
 
 /** Items on one page of My products or Transaction history. */
 const PAGE_SIZE = 5;
@@ -357,8 +390,22 @@ export class ConversationService {
         return this.withdrawAmount(user!, ctx);
       case "buy_product":
         return this.buyProduct(user!, ctx);
+      case "buy_tenor":
+        return this.buyTenor(user!, ctx);
+      case "buy_stock":
+        return this.buyStock(user!, ctx);
+      case "buy_shares":
+        return this.buyShares(session, user!, ctx);
+      case "buy_trust":
+        return this.buyTrust(ctx);
+      case "buy_beneficiary":
+        return this.buyBeneficiary(session, ctx);
+      case "buy_relationship":
+        return this.buyRelationship(session, user!, ctx);
       case "buy_amount":
         return this.buyAmount(session, user!, ctx);
+      case "buy_confirm":
+        return this.buyConfirm(session, user!, ctx);
       case "transaction":
         return this.transaction(session, user!, ctx);
       case "browse":
@@ -455,7 +502,10 @@ export class ConversationService {
         return {
           next: { step: "onboarding_flow", flowToken: token, draft: {} },
           replies: [
-            onboardingFlowMessage(token, "Great, let's get you set up! 🚀"),
+            onboardingFlowMessage(
+              token,
+              `Great, let's get you set up! 🚀\n\n${ONBOARDING_PRIVACY_TIP}`,
+            ),
           ],
         };
       }
@@ -463,7 +513,7 @@ export class ConversationService {
         next: { step: "ask_bvn" },
         replies: [
           text(
-            "Great, let's get you set up! 🚀\n\n" +
+            `Great, let's get you set up! 🚀\n\n${ONBOARDING_PRIVACY_TIP}\n\n` +
               bvnPrompt("*Step 1 of 4*\nPlease enter"),
           ),
         ],
@@ -877,7 +927,7 @@ export class ConversationService {
           `🎉 Your InvestNow account is ready, ${firstName(user.name ?? undefined)}!\n\n` +
             `BVN: ${hideBvn(user.bvn)}\n` +
             `Products: ${productsText(draft.productCodes)}\n\n` +
-            "Fund your wallet to start investing.",
+            `Fund your wallet to start investing.\n\n${PRIVACY_TIP}`,
         ),
         ...menu.replies,
       ],
@@ -1002,22 +1052,19 @@ export class ConversationService {
 
   /* ------------------------------------------------------------ actions */
 
-  /** Fund, withdraw or buy: in the transaction Flow when it's on, or step by step in the chat. */
+  /** Fund or withdraw in the transaction Flow when it's on; buying, and everything without Flows, step by step in the chat. */
   private async startTransaction(
     type: TransactionType,
     user: User,
     ctx: Context,
   ): Promise<Transition> {
-    if (!this.flowsOn("transaction", ctx.source))
+    // Buying has each product's own questions, so it is always asked in the chat.
+    if (type === "buy" || !this.flowsOn("transaction", ctx.source))
       return this.startInChat(type, user);
     const wallet = await this.users.walletBalance(user.id);
     if (type === "withdraw" && wallet === 0)
       return this.menu(
         "Your wallet is empty, so there's nothing to withdraw yet.",
-      );
-    if (type === "buy" && wallet === 0)
-      return this.menu(
-        "Your wallet balance is ₦0.00. Please fund your wallet first, then buy the product.",
       );
     const token = await this.newFlowToken("transaction", ctx);
     return {
@@ -1031,12 +1078,17 @@ export class ConversationService {
     type: TransactionType,
     user: User,
   ): Promise<Transition> {
-    if (type === "buy")
+    const wallet = await this.users.walletBalance(user.id);
+    if (type === "buy") {
+      if (wallet === 0)
+        return this.menu(
+          "Your wallet balance is ₦0.00. Please fund your wallet first, then buy the product.",
+        );
       return {
         next: { step: "buy_product" },
         replies: [productPicker(await this.ownedProducts(user.id))],
       };
-    const wallet = await this.users.walletBalance(user.id);
+    }
     if (type === "fund")
       return {
         next: { step: "fund_amount" },
@@ -1141,14 +1193,178 @@ export class ConversationService {
         "Your wallet balance is ₦0.00. Please fund your wallet first, then buy the product.",
       );
     }
+    switch (product.code) {
+      case "FIF":
+        return { next: { step: "buy_tenor" }, replies: [tenorPicker()] };
+      case "STK":
+        return { next: { step: "buy_stock" }, replies: [stockPicker()] };
+      case "TRS":
+        return { next: { step: "buy_trust" }, replies: [trustPicker()] };
+      default:
+        return this.askBuyAmount(
+          product.code,
+          defaultDetails(product.code),
+          user,
+        );
+    }
+  }
+
+  /** The amount question, with what the product's figures mean for an example principal. */
+  private async askBuyAmount(
+    productCode: string,
+    details: BuyDetails | undefined,
+    user: User,
+  ): Promise<Transition> {
+    const wallet = await this.users.walletBalance(user.id);
     return {
-      next: { step: "buy_amount", productCode: product.code },
-      replies: [
-        text(
-          `How much of *${product.title}* would you like to buy? Send the amount in naira.\n\nWallet balance: ${formatNaira(wallet)}`,
-        ),
-      ],
+      next: {
+        step: "buy_amount",
+        productCode,
+        ...(details ? { details } : {}),
+      },
+      replies: [text(amountPrompt(productCode, details, wallet))],
     };
+  }
+
+  /** Fixed Income Fund: the term, which sets the rate. */
+  private buyTenor(user: User, { answer }: Context): Promise<Transition> {
+    const days = Number(answer.replace(/^tenor:/, "").replace(/\s*days?$/, ""));
+    const tenor = FIF_TENORS.find((t) => t.days === days);
+    if (!tenor)
+      return Promise.resolve({
+        next: { step: "buy_tenor" },
+        replies: [tenorPicker()],
+      });
+    return this.askBuyAmount(
+      "FIF",
+      { kind: "tenor", days: tenor.days, ratePct: tenor.ratePct },
+      user,
+    );
+  }
+
+  /** Stocks: which one, then how many shares. */
+  private async buyStock(user: User, { answer }: Context): Promise<Transition> {
+    const stock =
+      stockByTicker(answer.replace(/^stock:/, "").toUpperCase()) ??
+      (/^\d+$/.test(answer) ? STOCKS[Number(answer) - 1] : undefined) ??
+      STOCKS.find((s) => s.name.toLowerCase() === answer);
+    if (!stock)
+      return {
+        next: { step: "buy_stock" },
+        replies: [stockPicker("Please choose a stock from the list.")],
+      };
+    const wallet = await this.users.walletBalance(user.id);
+    return {
+      next: { step: "buy_shares", ticker: stock.ticker },
+      replies: [text(sharesPrompt(stock, wallet))],
+    };
+  }
+
+  private async buyShares(
+    session: Extract<Session, { step: "buy_shares" }>,
+    user: User,
+    { input }: Context,
+  ): Promise<Transition> {
+    const stock = stockByTicker(session.ticker);
+    if (!stock)
+      return { next: { step: "buy_stock" }, replies: [stockPicker()] };
+    const typed = input.text.trim().replace(/,/g, "");
+    const shares = /^\d+$/.test(typed) ? Number(typed) : NaN;
+    if (!Number.isInteger(shares) || shares < 1 || shares > MAX_SHARES)
+      return {
+        next: session,
+        replies: [
+          text(
+            `Please send a whole number of shares, from 1 to ${MAX_SHARES.toLocaleString("en-NG")}, e.g. 10.`,
+          ),
+        ],
+      };
+    const cost = shares * stock.priceKobo;
+    const wallet = await this.users.walletBalance(user.id);
+    if (cost > wallet || cost > MAX_AMOUNT_KOBO) {
+      const most = Math.floor(
+        Math.min(wallet, MAX_AMOUNT_KOBO) / stock.priceKobo,
+      );
+      return {
+        next: session,
+        replies: [
+          text(
+            `${shares.toLocaleString("en-NG")} shares cost ${formatNaira(cost)}` +
+              (cost > wallet
+                ? `, more than your wallet balance of ${formatNaira(wallet)}.`
+                : `, more than the ${formatNaira(MAX_AMOUNT_KOBO)} an order can be.`) +
+              ` You can buy up to ${most.toLocaleString("en-NG")}. Please send a smaller number, or reply MENU.`,
+          ),
+        ],
+      };
+    }
+    return this.confirmBuy("STK", cost, {
+      kind: "shares",
+      ticker: stock.ticker,
+      shares,
+      priceKobo: stock.priceKobo,
+    });
+  }
+
+  /** Trustees: the service, the beneficiary's name, then who they are to the user. */
+  private buyTrust({ answer }: Context): Transition {
+    const index = /^trust:\d+$/.test(answer)
+      ? Number(answer.slice("trust:".length))
+      : /^\d+$/.test(answer)
+        ? Number(answer) - 1
+        : TRUST_SERVICES.findIndex((t) => t.title.toLowerCase() === answer);
+    const service = TRUST_SERVICES[index];
+    if (!service)
+      return {
+        next: { step: "buy_trust" },
+        replies: [trustPicker("Please choose a service from the list.")],
+      };
+    return {
+      next: { step: "buy_beneficiary", service: service.title },
+      replies: [text(beneficiaryPrompt(service.title))],
+    };
+  }
+
+  private buyBeneficiary(
+    session: Extract<Session, { step: "buy_beneficiary" }>,
+    { input }: Context,
+  ): Transition {
+    const name = parseFullName(input.text);
+    if (!name.ok) return { next: session, replies: [text(name.error)] };
+    return {
+      next: {
+        step: "buy_relationship",
+        service: session.service,
+        beneficiary: name.value,
+      },
+      replies: [relationshipPicker(name.value)],
+    };
+  }
+
+  private buyRelationship(
+    session: Extract<Session, { step: "buy_relationship" }>,
+    user: User,
+    { answer }: Context,
+  ): Promise<Transition> {
+    const typed = answer.replace(/^rel:/, "");
+    const relationship =
+      RELATIONSHIPS.find((r) => r.toLowerCase() === typed) ??
+      (/^\d+$/.test(typed) ? RELATIONSHIPS[Number(typed) - 1] : undefined);
+    if (!relationship)
+      return Promise.resolve({
+        next: session,
+        replies: [relationshipPicker(session.beneficiary)],
+      });
+    return this.askBuyAmount(
+      "TRS",
+      {
+        kind: "trust",
+        service: session.service,
+        beneficiary: session.beneficiary,
+        relationship,
+      },
+      user,
+    );
   }
 
   private async buyAmount(
@@ -1169,16 +1385,63 @@ export class ConversationService {
         ],
       };
     }
-    return this.askPin(
-      ctx,
-      {
-        type: "buy",
-        productCode: session.productCode,
-        amountKobo: amount.value,
+    return this.confirmBuy(session.productCode, amount.value, session.details);
+  }
+
+  /** What the purchase is and what to expect, with Confirm, Change and Cancel. */
+  private confirmBuy(
+    productCode: string,
+    amountKobo: number,
+    details: BuyDetails | undefined,
+  ): Transition {
+    return {
+      next: {
+        step: "buy_confirm",
+        productCode,
+        amountKobo,
+        ...(details ? { details } : {}),
       },
-      `Buy *${formatNaira(amount.value)}* of *${productTitle(session.productCode)}* from your wallet.\n\n` +
-        "Enter your 4-digit PIN to approve, or reply CANCEL.",
-    );
+      replies: [buyConfirmation(productCode, amountKobo, details)],
+    };
+  }
+
+  /** Confirm asks for the PIN; Change goes back to the amount (or the shares). */
+  private async buyConfirm(
+    session: Extract<Session, { step: "buy_confirm" }>,
+    user: User,
+    ctx: Context,
+  ): Promise<Transition> {
+    const phrase = asPhrase(ctx.answer);
+    const { productCode, amountKobo, details } = session;
+    if (ctx.answer === CHOICE.confirmBuy || CONFIRM_WORDS.has(phrase)) {
+      const action: PendingAction = {
+        type: "buy",
+        productCode,
+        amountKobo,
+        ...(details ? { details } : {}),
+      };
+      return this.askPin(
+        ctx,
+        action,
+        `*${actionSummary(action)}*\n\nEnter your 4-digit PIN to approve, or reply CANCEL.`,
+      );
+    }
+    if (ctx.answer === CHOICE.changeBuy || CHANGE_WORDS.has(phrase)) {
+      if (details?.kind === "shares") {
+        const stock = stockByTicker(details.ticker)!;
+        return {
+          next: { step: "buy_shares", ticker: details.ticker },
+          replies: [
+            text(sharesPrompt(stock, await this.users.walletBalance(user.id))),
+          ],
+        };
+      }
+      return this.askBuyAmount(productCode, details, user);
+    }
+    return {
+      next: session,
+      replies: [buyConfirmation(productCode, amountKobo, details)],
+    };
   }
 
   /** Asks for the PIN that approves `action`: in the PIN Flow when it's on, or typed in the chat. */
@@ -1358,7 +1621,7 @@ export class ConversationService {
           );
           return text(
             `✅ Your wallet has been funded with ${formatNaira(action.amountKobo)}.\n\n` +
-              `Wallet balance: ${formatNaira(result.balanceKobo)}\nRef: ${result.reference}\n\n_Demo: no real payment was taken._`,
+              `Wallet balance: ${formatNaira(result.balanceKobo)}\nRef: ${result.reference}\n\n_Demo: no real payment was taken._\n\n${PRIVACY_TIP}`,
           );
         }
         case "withdraw": {
@@ -1368,20 +1631,23 @@ export class ConversationService {
           );
           return text(
             `✅ Your withdrawal of ${formatNaira(action.amountKobo)} is on its way to your bank account.\n\n` +
-              `Wallet balance: ${formatNaira(result.balanceKobo)}\nRef: ${result.reference}\n\n_Demo: no real transfer was made._`,
+              `Wallet balance: ${formatNaira(result.balanceKobo)}\nRef: ${result.reference}\n\n_Demo: no real transfer was made._\n\n${PRIVACY_TIP}`,
           );
         }
         case "buy": {
+          const note = buyNote(action.amountKobo, action.details);
           const result = await this.users.buyProduct(
             user.id,
             action.productCode,
             action.amountKobo,
+            note,
           );
           const title = productTitle(action.productCode);
           return text(
-            `✅ You bought ${formatNaira(action.amountKobo)} of ${title}.\n\n` +
-              `${title}: ${formatNaira(result.productBalanceKobo)}\n` +
-              `Wallet balance: ${formatNaira(result.walletBalanceKobo)}\nRef: ${result.reference}`,
+            `✅ You bought ${formatNaira(action.amountKobo)} of ${title}.\n` +
+              (note ? `${note[0]!.toUpperCase()}${note.slice(1)}\n` : "") +
+              `\n${title}: ${formatNaira(result.productBalanceKobo)}\n` +
+              `Wallet balance: ${formatNaira(result.walletBalanceKobo)}\nRef: ${result.reference}\n\n${PRIVACY_TIP}`,
           );
         }
         case "balance":
@@ -1454,7 +1720,14 @@ function cancelledWhat(session: Session): PendingAction["type"] | null {
     case "withdraw_amount":
       return "withdraw";
     case "buy_product":
+    case "buy_tenor":
+    case "buy_stock":
+    case "buy_shares":
+    case "buy_trust":
+    case "buy_beneficiary":
+    case "buy_relationship":
     case "buy_amount":
+    case "buy_confirm":
       return "buy";
     case "transaction":
       return session.type;
@@ -1474,7 +1747,8 @@ function transactionLine(t: TransactionRecord): string {
         ? `*Withdrawal* · −${formatNaira(t.amountKobo)}`
         : `*Bought ${t.productCode ? productTitle(t.productCode) : "a product"}* · ${formatNaira(t.amountKobo)}`;
   const status = t.status === "successful" ? "" : ` (${t.status})`;
-  return `${what}${status}\n${formatWhen(t.createdAt)} · Ref ${t.reference}`;
+  const note = t.note ? `\n${t.note}` : "";
+  return `${what}${status}${note}\n${formatWhen(t.createdAt)} · Ref ${t.reference}`;
 }
 
 function isOnboardedStep(session: Session): boolean {
@@ -1584,6 +1858,77 @@ function productPicker(
       })),
     },
   ]);
+}
+
+function tenorPicker(): OutboundMessage {
+  return buttons(
+    tenorPrompt(),
+    FIF_TENORS.map((t) => ({ id: `tenor:${t.days}`, title: `${t.days} days` })),
+  );
+}
+
+function stockPicker(
+  body = "Which stock would you like to buy?",
+): OutboundMessage {
+  return list(`*${productTitle("STK")}*\n\n${body}`, "Stocks", [
+    {
+      title: "Nigerian Exchange",
+      rows: STOCKS.map((st) => ({
+        id: `stock:${st.ticker}`,
+        title: st.name,
+        description: `${st.ticker} · ${formatNaira(st.priceKobo)} a share`,
+      })),
+    },
+  ]);
+}
+
+function trustPicker(body = "Which service would you like?"): OutboundMessage {
+  return list(`*${productTitle("TRS")}*\n\n${body}`, "Services", [
+    {
+      title: "Trustee services",
+      rows: TRUST_SERVICES.map((t, i) => ({
+        id: `trust:${i}`,
+        title: t.title,
+        description: t.description,
+      })),
+    },
+  ]);
+}
+
+function beneficiaryPrompt(service: string): string {
+  return service === "Simple will"
+    ? "Who is the main beneficiary of your will? Please send their full name, e.g. Ada Obi."
+    : `Who is the ${service.toLowerCase()} for? Please send the beneficiary's full name, e.g. Ada Obi.`;
+}
+
+function relationshipPicker(beneficiary: string): OutboundMessage {
+  return list(`What is ${beneficiary} to you?`, "Relationship", [
+    {
+      title: "Relationship",
+      rows: RELATIONSHIPS.map((r) => ({
+        id: `rel:${r.toLowerCase()}`,
+        title: r,
+      })),
+    },
+  ]);
+}
+
+function buyConfirmation(
+  productCode: string,
+  amountKobo: number,
+  details: BuyDetails | undefined,
+): OutboundMessage {
+  return buttons(
+    `*Please confirm your purchase*\n\n${buyQuote(productCode, amountKobo, details)}`,
+    [
+      { id: CHOICE.confirmBuy, title: "Confirm" },
+      {
+        id: CHOICE.changeBuy,
+        title: details?.kind === "shares" ? "Change shares" : "Change amount",
+      },
+      { id: CHOICE.cancel, title: "Cancel" },
+    ],
+  );
 }
 
 /** Whether every onboarding answer is in. */

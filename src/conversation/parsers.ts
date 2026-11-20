@@ -172,3 +172,21 @@ export function formatNaira(kobo: number): string {
 export function maskBvn(bvn: string): string {
   return `${"*".repeat(Math.max(0, bvn.length - 4))}${bvn.slice(-4)}`;
 }
+
+/** A person's full name: at least two words of letters (hyphens, apostrophes and dots allowed), up to 80 characters. */
+export function parseFullName(input: string): Parsed<string> {
+  const name = input.trim().replace(/\s+/g, " ");
+  if (
+    name.length < 3 ||
+    name.length > 80 ||
+    !/^\p{L}[\p{L}'’.\- ]*$/u.test(name)
+  )
+    return fail(
+      "Please send the beneficiary's full name in letters, e.g. Ada Obi.",
+    );
+  if (name.split(" ").filter((w) => /\p{L}/u.test(w)).length < 2)
+    return fail(
+      "Please send the beneficiary's first name and surname, e.g. Ada Obi.",
+    );
+  return ok(name);
+}

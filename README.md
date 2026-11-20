@@ -156,20 +156,31 @@ stateDiagram-v2
   Review --> EditAnswer: Edit BVN, date of birth, products or PIN
   EditAnswer --> Review: new value, or BACK
   Review --> Menu: Confirm, saved to investnow.db
-  Menu --> TransactionForm: Fund, Withdraw or Buy (Flows on)
+  Menu --> TransactionForm: Fund or Withdraw (Flows on)
   TransactionForm --> Menu: amount and PIN ok, or 3 wrong PINs
   TransactionForm --> FundAmount: form refused, or TYPE
   Menu --> FundAmount: Fund wallet (chat steps)
   Menu --> WithdrawAmount: Withdraw (chat steps)
-  Menu --> BuyProduct: Buy products (chat steps)
+  Menu --> BuyProduct: Buy products (always chat steps)
   Menu --> Authorize: Check balance, My products or Transaction history
   Authorize --> Browse: PIN ok, for My products or Transaction history
   Browse --> Browse: Next or Previous
   Browse --> Menu: Menu, or CANCEL
   FundAmount --> Authorize
   WithdrawAmount --> Authorize
-  BuyProduct --> BuyAmount
-  BuyAmount --> Authorize
+  BuyProduct --> BuyAmount: Money Market, Balanced or Equity Fund
+  BuyProduct --> BuyTenor: Fixed Income Fund
+  BuyTenor --> BuyAmount: 90, 180 or 365 days
+  BuyProduct --> BuyStock: Stocks
+  BuyStock --> BuyShares
+  BuyShares --> BuyConfirm: a whole number of shares the wallet covers
+  BuyProduct --> BuyTrust: Trustees
+  BuyTrust --> BuyBeneficiary: service
+  BuyBeneficiary --> BuyRelationship: full name
+  BuyRelationship --> BuyAmount
+  BuyAmount --> BuyConfirm: up to the wallet balance
+  BuyConfirm --> BuyAmount: Change amount
+  BuyConfirm --> Authorize: Confirm
   Authorize --> Menu: PIN ok (form or typed), or 3 wrong PINs
   note right of Menu: CANCEL in any transaction step confirms it and returns here
   note right of OnboardingPrompt: CANCEL in any onboarding step returns here
@@ -177,7 +188,7 @@ stateDiagram-v2
 
 - **Welcome:** a new user gets **Proceed** and **Close** buttons; an onboarded user gets the menu.
   New users, and anyone whose session closes, are also told about InvestNow's USSD service, `*7277#`.
-- **Forms first:** where the [Flows](#whatsapp-flows-forms) are set up, onboarding, fund/withdraw/buy
+- **Forms first:** where the [Flows](#whatsapp-flows-forms) are set up, onboarding, fund/withdraw
   and PIN approvals open a WhatsApp form instead of the chat steps below, so BVNs and PINs are never
   typed into the chat. If WhatsApp refuses a form, the chat steps start by themselves. A user who
   writes instead of filling in the form gets it again, now offering `TYPE` for the chat steps; a
@@ -201,7 +212,24 @@ stateDiagram-v2
   - **Fund wallet**: amount, then PIN.
   - **Check balance**: PIN, then the wallet, each product and the total.
   - **Withdraw**: amount (up to the wallet balance), then PIN.
-  - **Buy products**: product, amount (up to the wallet balance), then PIN. This moves money from the wallet into the product.
+  - **Buy products**: the product, its own questions, the amount (up to the wallet balance), a
+    confirmation with **Confirm**, **Change amount** (or **Change shares**) and **Cancel**, then the
+    PIN. This moves money from the wallet into the product. Buying is always asked in the chat
+    (never in the transaction form), because each product asks different things:
+
+    | Product           | Asks, and shows                                                                                                                                               |
+    | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Money Market Fund | The current rate (18.50% a year) and what ₦100,000 earns a day and in 30 days; after the amount, the expected interest a day and in 30 days                   |
+    | Fixed Income Fund | The term (90, 180 or 365 days, each with its rate); after the amount, the interest at maturity, the maturity date and what is paid back                       |
+    | Balanced, Equity  | The unit price, the past year's return and the risk; after the amount, the units it buys                                                                      |
+    | Stocks            | The stock (5 on the Nigerian Exchange), then a whole number of shares, checked against the wallet; the confirmation shows shares × price and the total        |
+    | Trustees          | The service (simple will, private trust, education trust, estate planning), the beneficiary's full name (two words or more) and relationship, then the amount |
+
+    The rates, prices and stocks are demo figures in `src/conversation/investments.constants.ts`; the
+    quotes are worked out in `src/conversation/investments.service.ts` (simple interest on a 365-day
+    year). What was chosen is saved with the transaction (`transactions.note`) and shown in the
+    history, e.g. "40 MTNN shares at ₦230.00" or "Simple will for Chidi Okafor (Spouse)".
+
   - **My products**: PIN, then the products the user holds, each with its amount, and the total
     invested.
   - **Transaction history**: PIN, then the user's fundings, withdrawals and purchases, newest first,
@@ -212,6 +240,10 @@ stateDiagram-v2
     and `CANCEL` returns to the menu.
   - **Close session**.
 - **Amounts:** `5000`, `5,000`, `₦5,000.50`, `N5000` and `5k` all work; the range is ₦100 to ₦10,000,000.
+- **Privacy reminders:** when onboarding starts, on the account-ready message and after every
+  completed fund, withdrawal or purchase, users are reminded to lock the chat (WhatsApp's **Chat
+  lock**) and clear it (**Clear chat**), so no one else using the phone can see their investments.
+  The bot can't do either for them: WhatsApp has no API for it.
 - **Everywhere:**
   - `CANCEL` (or `back`, `go back`, `abort`, `never mind`, `nvm`, `forget it`, `not now`, `no thanks`,
     in any case and with punctuation) cancels what is in progress, says so ("❌ Your withdrawal was
@@ -351,11 +383,11 @@ WhatsApp lists are single-select; the onboarding form has checkboxes.
 Three [WhatsApp Flows](https://developers.facebook.com/docs/whatsapp/flows),
 defined in `src/flows/definitions.ts`:
 
-| Flow          | Screens                                                                                                | Opened by                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| `onboarding`  | BVN (masked) → date of birth (date picker) → products (checkboxes) → PIN and confirm (masked) → review | **Proceed** for a new user                                   |
-| `transaction` | amount (and the product, for Buy) → PIN (masked)                                                       | **Fund wallet**, **Withdraw**, **Buy**                       |
-| `pin`         | PIN (masked)                                                                                           | **Check balance**, and a PIN after amounts typed in the chat |
+| Flow          | Screens                                                                                                | Opened by                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onboarding`  | BVN (masked) → date of birth (date picker) → products (checkboxes) → PIN and confirm (masked) → review | **Proceed** for a new user                                                                                                                      |
+| `transaction` | amount → PIN (masked)                                                                                  | **Fund wallet**, **Withdraw**                                                                                                                   |
+| `pin`         | PIN (masked)                                                                                           | **Check balance**, **My products**, **Transaction history**, **Buy products** after its confirmation, and a PIN after amounts typed in the chat |
 
 **How it works:**
 

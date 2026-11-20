@@ -15,6 +15,13 @@
       "when": 1793817857748,
       "tag": "20261104184417_conversation_event_payloads",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795171489193,
+      "tag": "20261120104449_transaction_note",
+      "breakpoints": true
     }
   ]
 }
