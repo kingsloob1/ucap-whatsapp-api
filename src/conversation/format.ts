@@ -33,5 +33,25 @@ export function actionSummary(action: PendingAction): string {
       return `Buy ${formatNaira(action.amountKobo)} of ${productTitle(action.productCode)} from your wallet`;
     case "balance":
       return "View your wallet and investment balances";
+    case "products":
+      return "View your products and what you hold in each";
+    case "history":
+      return "View your transaction history";
   }
+}
+
+const WHEN = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Africa/Lagos",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** A stored ISO timestamp in Nigerian time, e.g. "20 Nov 2026, 11:29". */
+export function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : WHEN.format(date);
 }

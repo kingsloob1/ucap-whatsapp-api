@@ -28,15 +28,22 @@ import {
   sessionKey,
   ussd,
 } from "./conversation.constants";
-import { actionSummary, formatDob, hideBvn, productsText } from "./format";
+import {
+  actionSummary,
+  formatDob,
+  formatWhen,
+  hideBvn,
+  productsText,
+} from "./format";
 import type { SessionSource } from "../database/sessions.interface";
 import type { FlowName, FlowRef } from "../flows/flows.interface";
-import type { User } from "../database/users.interface";
+import type { TransactionRecord, User } from "../database/users.interface";
 import type {
   InboundInput,
   OutboundMessage,
 } from "../whatsapp/whatsapp.interface";
 import type {
+  BrowseView,
   Contact,
   Context,
   MessageMeta,
@@ -93,7 +100,18 @@ const CHOICE = {
   balance: "menu:balance",
   withdraw: "menu:withdraw",
   buy: "menu:buy",
+  products: "menu:products",
+  history: "menu:history",
+  /** The paginated views' buttons; Menu is the MENU command itself. */
+  next: "page:next",
+  previous: "page:previous",
+  menu: "menu",
 } as const;
+
+/** Items on one page of My products or Transaction history. */
+const PAGE_SIZE = 5;
+const NEXT_WORDS = new Set(["next", "more", "n", "next page"]);
+const PREVIOUS_WORDS = new Set(["previous", "prev", "p", "previous page"]);
 
 /** The review's list rows. */
 const REVIEW = {
@@ -343,6 +361,8 @@ export class ConversationService {
         return this.buyAmount(session, user!, ctx);
       case "transaction":
         return this.transaction(session, user!, ctx);
+      case "browse":
+        return this.browse(session, user!, ctx);
       case "authorize":
         return this.authorize(session, user!, ctx);
     }
@@ -396,12 +416,16 @@ export class ConversationService {
         ],
       };
 
+    // Leaving a paginated view isn't cancelling anything.
+    if (session.step === "browse")
+      return this.menu("What would you like to do?");
     const what = cancelledWhat(session);
     if (!what)
       return this.menu("There's nothing to cancel. What would you like to do?");
+    const money = what === "fund" || what === "withdraw" || what === "buy";
     return this.menu("What would you like to do next?", [
       text(
-        `❌ ${what} was cancelled.${what === CANCELLED.balance ? "" : " No money was moved."}`,
+        `❌ ${CANCELLED[what]} was cancelled.${money ? " No money was moved." : ""}`,
       ),
     ]);
   }
@@ -511,9 +535,7 @@ export class ConversationService {
     if (!ctx.user) return this.welcome(ctx);
     if (session.approved && session.action) {
       await this.sessions.delete(flowKey(token));
-      return this.menu("Anything else?", [
-        await this.execute(session.action, ctx.user),
-      ]);
+      return this.approved(session.action, ctx.user);
     }
     if (session.attempts >= MAX_PIN_ATTEMPTS) {
       await this.sessions.delete(flowKey(token));
@@ -906,6 +928,16 @@ export class ConversationService {
                   description: "Invest from your wallet in a product",
                 },
                 {
+                  id: CHOICE.products,
+                  title: "My products",
+                  description: "Your products and what you hold in each",
+                },
+                {
+                  id: CHOICE.history,
+                  title: "Transaction history",
+                  description: "Your funding, withdrawals and purchases",
+                },
+                {
                   id: CHOICE.close,
                   title: "Close session",
                   description: "End this conversation",
@@ -929,7 +961,9 @@ export class ConversationService {
       [CHOICE.balance, ["2", "balance", "check balance"]],
       [CHOICE.withdraw, ["3", "withdraw"]],
       [CHOICE.buy, ["4", "buy", "buy products"]],
-      [CHOICE.close, ["5", "close session"]],
+      [CHOICE.products, ["5", "products", "my products"]],
+      [CHOICE.history, ["6", "history", "transactions", "transaction history"]],
+      [CHOICE.close, ["7", "close session"]],
     ]);
 
     switch (choice) {
@@ -945,6 +979,18 @@ export class ConversationService {
         return this.startTransaction("withdraw", user, ctx);
       case CHOICE.buy:
         return this.startTransaction("buy", user, ctx);
+      case CHOICE.products:
+        return this.askPin(
+          ctx,
+          { type: "products" },
+          "Please enter your 4-digit PIN to view your products.",
+        );
+      case CHOICE.history:
+        return this.askPin(
+          ctx,
+          { type: "history" },
+          "Please enter your 4-digit PIN to view your transaction history.",
+        );
       case CHOICE.close:
         return this.close();
       default:
@@ -1185,13 +1231,122 @@ export class ConversationService {
         ],
       };
     }
-    return this.menu("Anything else?", [
-      await this.execute(session.action, user),
-    ]);
+    return this.approved(session.action, user);
+  }
+
+  /** A request the PIN approved: a paginated view opens on its first page; anything else runs, then the menu. */
+  private async approved(
+    action: PendingAction,
+    user: User,
+  ): Promise<Transition> {
+    if (action.type === "products" || action.type === "history")
+      return this.page(action.type, 1, user);
+    return this.menu("Anything else?", [await this.execute(action, user)]);
+  }
+
+  /* ------------------------------------------------------ paginated views */
+
+  /** Next / Previous on a page; anything else is read as a menu choice, so "fund" or "2" works from here too. */
+  private browse(
+    session: Extract<Session, { step: "browse" }>,
+    user: User,
+    ctx: Context,
+  ): Promise<Transition> {
+    const phrase = asPhrase(ctx.answer);
+    if (ctx.answer === CHOICE.next || NEXT_WORDS.has(phrase))
+      return this.page(session.view, session.page + 1, user);
+    if (ctx.answer === CHOICE.previous || PREVIOUS_WORDS.has(phrase))
+      return this.page(session.view, session.page - 1, user);
+    return this.menuChoice(user, ctx);
+  }
+
+  /** One page of a view, with Previous / Next / Menu buttons. A page out of range shows the nearest one. */
+  private async page(
+    view: BrowseView,
+    requested: number,
+    user: User,
+  ): Promise<Transition> {
+    const content =
+      view === "products"
+        ? await this.productsPage(requested, user)
+        : await this.historyPage(requested, user);
+    if (!content) {
+      return this.menu("What would you like to do?", [
+        text(
+          view === "products"
+            ? "You don't have any products yet. Choose *Buy products* to invest in one."
+            : "You haven't made any transactions yet. Choose *Fund wallet* to make your first one.",
+        ),
+      ]);
+    }
+    const { body, page, pages } = content;
+    const nav = [
+      ...(page > 1 ? [{ id: CHOICE.previous, title: "◀ Previous" }] : []),
+      ...(page < pages ? [{ id: CHOICE.next, title: "Next ▶" }] : []),
+      { id: CHOICE.menu, title: "Menu" },
+    ];
+    return {
+      next: { step: "browse", view, page },
+      replies: [
+        buttons(body, nav, pages > 1 ? `Page ${page} of ${pages}` : undefined),
+      ],
+    };
+  }
+
+  private async productsPage(
+    requested: number,
+    user: User,
+  ): Promise<{ body: string; page: number; pages: number } | null> {
+    const holdings = await this.users.holdings(user.id);
+    if (holdings.length === 0) return null;
+    const pages = Math.ceil(holdings.length / PAGE_SIZE);
+    const page = Math.min(Math.max(requested, 1), pages);
+    const first = (page - 1) * PAGE_SIZE;
+    const total = holdings.reduce((sum, h) => sum + h.balanceKobo, 0);
+    const lines = holdings
+      .slice(first, first + PAGE_SIZE)
+      .map(
+        (h, i) =>
+          `${first + i + 1}. *${productTitle(h.productCode)}*\n${formatNaira(h.balanceKobo)}`,
+      );
+    return {
+      body:
+        `📊 *Your products*\n\n${lines.join("\n\n")}\n\n` +
+        `*Total invested: ${formatNaira(total)}*`,
+      page,
+      pages,
+    };
+  }
+
+  private async historyPage(
+    requested: number,
+    user: User,
+  ): Promise<{ body: string; page: number; pages: number } | null> {
+    const load = (page: number) =>
+      this.users.transactions(user.id, {
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+      });
+    const wanted = Math.max(requested, 1);
+    const asked = await load(wanted);
+    if (asked.total === 0) return null;
+    const pages = Math.ceil(asked.total / PAGE_SIZE);
+    // A Next tapped on an old page asks past the end: the last page is shown.
+    const page = Math.min(wanted, pages);
+    const { items } = page === wanted ? asked : await load(page);
+    const first = (page - 1) * PAGE_SIZE;
+    const lines = items.map(
+      (t, i) => `${first + i + 1}. ${transactionLine(t)}`,
+    );
+    return {
+      body: `🧾 *Transaction history*\n_Newest first_\n\n${lines.join("\n\n")}`,
+      page,
+      pages,
+    };
   }
 
   private async execute(
-    action: PendingAction,
+    action: Exclude<PendingAction, { type: BrowseView }>,
     user: User,
   ): Promise<OutboundMessage> {
     try {
@@ -1287,25 +1442,39 @@ const CANCELLED = {
   withdraw: "Your withdrawal",
   buy: "Your purchase",
   balance: "Your balance check",
+  products: "Viewing your products",
+  history: "Viewing your transaction history",
 } as const satisfies Record<PendingAction["type"], string>;
 
 /** The request a session of an onboarded user has in progress, or null at the menu. */
-function cancelledWhat(session: Session): string | null {
+function cancelledWhat(session: Session): PendingAction["type"] | null {
   switch (session.step) {
     case "fund_amount":
-      return CANCELLED.fund;
+      return "fund";
     case "withdraw_amount":
-      return CANCELLED.withdraw;
+      return "withdraw";
     case "buy_product":
     case "buy_amount":
-      return CANCELLED.buy;
+      return "buy";
     case "transaction":
-      return CANCELLED[session.type];
+      return session.type;
     case "authorize":
-      return CANCELLED[session.action.type];
+      return session.action.type;
     default:
       return null;
   }
+}
+
+/** One transaction in the history: what it was, the amount, when, and its reference. */
+function transactionLine(t: TransactionRecord): string {
+  const what =
+    t.type === "fund"
+      ? `*Wallet funded* · +${formatNaira(t.amountKobo)}`
+      : t.type === "withdraw"
+        ? `*Withdrawal* · −${formatNaira(t.amountKobo)}`
+        : `*Bought ${t.productCode ? productTitle(t.productCode) : "a product"}* · ${formatNaira(t.amountKobo)}`;
+  const status = t.status === "successful" ? "" : ` (${t.status})`;
+  return `${what}${status}\n${formatWhen(t.createdAt)} · Ref ${t.reference}`;
 }
 
 function isOnboardedStep(session: Session): boolean {
