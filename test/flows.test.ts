@@ -302,17 +302,18 @@ describe("fund, buy and balance in Flows", () => {
     ]);
   });
 
-  test("buy: the product and amount on one screen", async () => {
-    const token = formIn(await say(waId, tap("menu:buy")), "transaction");
-    let r = await exchange(token, undefined);
-    expect(r.data.choose_product).toBe(true);
-    r = await exchange(token, "AMOUNT", { amount: "20000" });
-    expect(r.data.error_message).toContain("choose a product");
-    r = await exchange(token, "AMOUNT", { product: "EQF", amount: "90000" });
-    expect(r.data.amount_error).toContain("₦50,000.00");
-    r = await exchange(token, "AMOUNT", { product: "EQF", amount: "20000" });
-    expect(r.data.summary).toBe(
-      "Buy ₦20,000.00 of Equity Fund from your wallet.",
+  test("buy: the product's own steps in the chat, then the PIN form", async () => {
+    // No transaction form for buying: each product asks its own questions.
+    let replies = await say(waId, tap("menu:buy"));
+    expect(replies.some((m) => m.kind === "flow")).toBe(false);
+    expect((await conversation.session(waId))?.step).toBe("buy_product");
+    replies = await say(waId, tap("product:EQF"));
+    expect(replies[0]!.body).toContain("Unit price: *₦1.8734*");
+    replies = await say(waId, "20000");
+    expect(replies[0]!.body).toContain("Units: about *10,675.77*");
+    const token = formIn(await say(waId, tap("buy:confirm", "Confirm")), "pin");
+    expect((await exchange(token, undefined)).data.summary).toBe(
+      "Buy ₦20,000.00 of Equity Fund from your wallet (about 10,675.77 units at ₦1.8734).",
     );
     expect((await exchange(token, "PIN", { pin: "4826" })).screen).toBe(
       "SUCCESS",

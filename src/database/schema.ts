@@ -66,6 +66,8 @@ export const transactions = sqliteTable(
     type: text("type", { enum: ["fund", "withdraw", "buy"] }).notNull(),
     productCode: text("product_code"),
     amountKobo: integer("amount_kobo").notNull(),
+    /** What was bought, for the history: e.g. "20 DANGCEM shares at ₦480.00". */
+    note: text("note"),
     status: text("status").notNull().default("successful"),
     createdAt: text("created_at").notNull().default(now),
   },

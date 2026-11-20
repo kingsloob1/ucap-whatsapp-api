@@ -1,5 +1,6 @@
 /** How answers and requests are shown back to users, in chat messages, Flow screens and the history. */
 import { formatNaira } from "./parsers";
+import { buyNote } from "./investments.service";
 import { productTitle } from "./products";
 import type { PendingAction } from "./conversation.interface";
 
@@ -29,8 +30,10 @@ export function actionSummary(action: PendingAction): string {
       return `Fund your wallet with ${formatNaira(action.amountKobo)}`;
     case "withdraw":
       return `Withdraw ${formatNaira(action.amountKobo)} to your bank account`;
-    case "buy":
-      return `Buy ${formatNaira(action.amountKobo)} of ${productTitle(action.productCode)} from your wallet`;
+    case "buy": {
+      const note = buyNote(action.amountKobo, action.details);
+      return `Buy ${formatNaira(action.amountKobo)} of ${productTitle(action.productCode)} from your wallet${note ? ` (${note})` : ""}`;
+    }
     case "balance":
       return "View your wallet and investment balances";
     case "products":

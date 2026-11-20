@@ -49,11 +49,55 @@ export type TransactionType = "fund" | "withdraw" | "buy";
 export type PendingAction =
   | { type: "fund"; amountKobo: number }
   | { type: "withdraw"; amountKobo: number }
-  | { type: "buy"; productCode: string; amountKobo: number }
+  | {
+      type: "buy";
+      productCode: string;
+      amountKobo: number;
+      /** What the product's buying steps chose; absent for a purchase made in the transaction form. */
+      details?: BuyDetails;
+    }
   | { type: "balance" }
   // A paginated view: one member each, so a check on `type` narrows it.
   | { type: "products" }
   | { type: "history" };
+
+/** A Fixed Income Fund term. */
+export interface Tenor {
+  days: number;
+  ratePct: number;
+}
+
+/** A unit-priced fund's figures. */
+export interface FundTerms {
+  /** Naira per unit, to 4 decimal places. */
+  unitPrice: number;
+  /** The past year's return, in percent. */
+  oneYearPct: number;
+  risk: "Low" | "Medium" | "High";
+}
+
+export interface Stock {
+  ticker: string;
+  name: string;
+  priceKobo: number;
+}
+
+/**
+ * What a purchase's product-specific steps chose, kept with the request and
+ * summarised on the transaction: the rate quoted, the term, the unit price,
+ * the shares, or the trust's beneficiary.
+ */
+export type BuyDetails =
+  | { kind: "rate"; ratePct: number }
+  | { kind: "tenor"; days: number; ratePct: number }
+  | { kind: "units"; unitPrice: number }
+  | { kind: "shares"; ticker: string; shares: number; priceKobo: number }
+  | {
+      kind: "trust";
+      service: string;
+      beneficiary: string;
+      relationship: string;
+    };
 
 /** The paginated views of the menu: what the user holds, and their transaction history. */
 export type BrowseView = "products" | "history";
@@ -112,8 +156,21 @@ export type Session =
   | { step: "menu" }
   | { step: "fund_amount" }
   | { step: "withdraw_amount" }
+  // Buying: the product, its own questions, the amount, then a confirmation before the PIN.
   | { step: "buy_product" }
-  | { step: "buy_amount"; productCode: string }
+  | { step: "buy_tenor" }
+  | { step: "buy_stock" }
+  | { step: "buy_shares"; ticker: string }
+  | { step: "buy_trust" }
+  | { step: "buy_beneficiary"; service: string }
+  | { step: "buy_relationship"; service: string; beneficiary: string }
+  | { step: "buy_amount"; productCode: string; details?: BuyDetails }
+  | {
+      step: "buy_confirm";
+      productCode: string;
+      amountKobo: number;
+      details?: BuyDetails;
+    }
   // A page of a paginated view, after the PIN: Next / Previous move between pages.
   | { step: "browse"; view: BrowseView; page: number }
   // Fund, withdraw or buy in a WhatsApp Flow: the amount (and product) screen

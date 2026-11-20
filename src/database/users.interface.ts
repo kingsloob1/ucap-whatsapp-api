@@ -23,7 +23,13 @@ export type TransactionType = (typeof transactions.$inferSelect)["type"];
 /** A transaction as the history shows it. */
 export type TransactionRecord = Pick<
   typeof transactions.$inferSelect,
-  "reference" | "type" | "productCode" | "amountKobo" | "status" | "createdAt"
+  | "reference"
+  | "type"
+  | "productCode"
+  | "amountKobo"
+  | "note"
+  | "status"
+  | "createdAt"
 >;
 
 /** One page of a user's transactions, newest first, and how many there are in all. */

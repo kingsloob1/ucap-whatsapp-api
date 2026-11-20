@@ -103,6 +103,7 @@ export class UsersRepository {
         type: TransactionRecord["type"];
         product_code: string | null;
         amount_kobo: number;
+        note: string | null;
         status: string;
         created_at: string;
       }[],
@@ -110,7 +111,7 @@ export class UsersRepository {
       this
         .sql`SELECT COUNT(*) AS total FROM transactions WHERE user_id = ${userId}`,
       this.sql`
-        SELECT reference, type, product_code, amount_kobo, status, created_at
+        SELECT reference, type, product_code, amount_kobo, note, status, created_at
         FROM transactions WHERE user_id = ${userId}
         ORDER BY created_at DESC, id DESC
         LIMIT ${limit} OFFSET ${offset}`,
@@ -122,6 +123,7 @@ export class UsersRepository {
         type: r.type,
         productCode: r.product_code,
         amountKobo: Number(r.amount_kobo),
+        note: r.note,
         status: r.status,
         createdAt: r.created_at,
       })),
@@ -175,11 +177,12 @@ export class UsersRepository {
     return { balanceKobo, reference: ref };
   }
 
-  /** Moves money from the wallet into a product, subscribing the user to it if needed. */
+  /** Moves money from the wallet into a product, subscribing the user to it if needed. `note` says what was bought, for the history. */
   async buyProduct(
     userId: number,
     productCode: string,
     amountKobo: number,
+    note: string | null = null,
   ): Promise<{
     walletBalanceKobo: number;
     productBalanceKobo: number;
@@ -200,8 +203,8 @@ export class UsersRepository {
         INSERT INTO user_products (user_id, product_code, balance_kobo) VALUES (${userId}, ${productCode}, ${amountKobo})
         ON CONFLICT (user_id, product_code) DO UPDATE SET balance_kobo = balance_kobo + excluded.balance_kobo
         RETURNING balance_kobo`;
-      await tx`INSERT INTO transactions (reference, user_id, type, product_code, amount_kobo)
-               VALUES (${ref}, ${userId}, 'buy', ${productCode}, ${amountKobo})`;
+      await tx`INSERT INTO transactions (reference, user_id, type, product_code, amount_kobo, note)
+               VALUES (${ref}, ${userId}, 'buy', ${productCode}, ${amountKobo}, ${note})`;
       return {
         walletBalanceKobo: Number(wallet[0]!.wallet_balance_kobo),
         productBalanceKobo: Number(holding[0]!.balance_kobo),
