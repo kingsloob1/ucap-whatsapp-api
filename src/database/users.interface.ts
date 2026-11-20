@@ -20,6 +20,18 @@ export interface NewUser {
 
 export type TransactionType = (typeof transactions.$inferSelect)["type"];
 
+/** A transaction as the history shows it. */
+export type TransactionRecord = Pick<
+  typeof transactions.$inferSelect,
+  "reference" | "type" | "productCode" | "amountKobo" | "status" | "createdAt"
+>;
+
+/** One page of a user's transactions, newest first, and how many there are in all. */
+export interface TransactionPage {
+  items: TransactionRecord[];
+  total: number;
+}
+
 export interface UserRow {
   id: number;
   wa_id: string;

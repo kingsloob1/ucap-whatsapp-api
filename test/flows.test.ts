@@ -346,6 +346,23 @@ describe("fund, buy and balance in Flows", () => {
     );
   });
 
+  test("transaction history: the PIN form opens its first page", async () => {
+    const token = formIn(await say(waId, tap("menu:history")), "pin");
+    expect(await exchange(token, undefined)).toMatchObject({
+      screen: "PIN",
+      data: { summary: "View your transaction history." },
+    });
+    expect((await exchange(token, "PIN", { pin: "4826" })).screen).toBe(
+      "SUCCESS",
+    );
+    await waitFor(
+      async () => (await conversation.session(waId))?.step === "browse",
+    );
+    const page = (await history(waId)).findLast((e) => e.direction === "out");
+    expect(page?.message.body).toContain("🧾 *Transaction history*");
+    expect(page?.message).toMatchObject({ kind: "buttons" });
+  });
+
   test("CANCEL while a form is open confirms it, shows the menu and closes the form", async () => {
     const token = formIn(await say(waId, tap("menu:fund")), "transaction");
     const replies = await say(waId, "cancel");

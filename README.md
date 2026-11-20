@@ -162,7 +162,10 @@ stateDiagram-v2
   Menu --> FundAmount: Fund wallet (chat steps)
   Menu --> WithdrawAmount: Withdraw (chat steps)
   Menu --> BuyProduct: Buy products (chat steps)
-  Menu --> Authorize: Check balance
+  Menu --> Authorize: Check balance, My products or Transaction history
+  Authorize --> Browse: PIN ok, for My products or Transaction history
+  Browse --> Browse: Next or Previous
+  Browse --> Menu: Menu, or CANCEL
   FundAmount --> Authorize
   WithdrawAmount --> Authorize
   BuyProduct --> BuyAmount
@@ -194,11 +197,20 @@ stateDiagram-v2
     PIN (hidden), with **Confirm & create** and a row to change each answer (or reply `1`–`5`).
     An edit is validated like the original step and returns to the review; `BACK` keeps the current
     value. A new PIN is confirmed again. The account is created only on **Confirm & create**.
-- **Menu** (an interactive list, or reply `1`–`5`):
+- **Menu** (an interactive list, or reply `1`–`7`):
   - **Fund wallet**: amount, then PIN.
   - **Check balance**: PIN, then the wallet, each product and the total.
   - **Withdraw**: amount (up to the wallet balance), then PIN.
   - **Buy products**: product, amount (up to the wallet balance), then PIN. This moves money from the wallet into the product.
+  - **My products**: PIN, then the products the user holds, each with its amount, and the total
+    invested.
+  - **Transaction history**: PIN, then the user's fundings, withdrawals and purchases, newest first,
+    each with its amount, date and time (Nigerian time) and reference.
+  - Both are **paginated**, 5 items a page, with **◀ Previous**, **Next ▶** and **Menu** buttons
+    and "Page 1 of 3" underneath (typed `next` / `previous` work too). The PIN is asked once; moving
+    between pages doesn't ask again. From a page, a menu choice (`fund`, `2`, …) goes straight to it,
+    and `CANCEL` returns to the menu.
+  - **Close session**.
 - **Amounts:** `5000`, `5,000`, `₦5,000.50`, `N5000` and `5k` all work; the range is ₦100 to ₦10,000,000.
 - **Everywhere:**
   - `CANCEL` (or `back`, `go back`, `abort`, `never mind`, `nvm`, `forget it`, `not now`, `no thanks`,

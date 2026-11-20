@@ -4,6 +4,8 @@ import { APP_DB } from "./database";
 import type {
   Holding,
   NewUser,
+  TransactionPage,
+  TransactionRecord,
   TransactionType,
   User,
   UserRow,
@@ -87,6 +89,43 @@ export class UsersRepository {
       productCode: r.product_code,
       balanceKobo: Number(r.balance_kobo),
     }));
+  }
+
+  /** A page of the user's transactions, newest first: `limit` of them after skipping `offset`. */
+  async transactions(
+    userId: number,
+    { limit, offset }: { limit: number; offset: number },
+  ): Promise<TransactionPage> {
+    const [count, rows]: [
+      { total: number }[],
+      {
+        reference: string;
+        type: TransactionRecord["type"];
+        product_code: string | null;
+        amount_kobo: number;
+        status: string;
+        created_at: string;
+      }[],
+    ] = await Promise.all([
+      this
+        .sql`SELECT COUNT(*) AS total FROM transactions WHERE user_id = ${userId}`,
+      this.sql`
+        SELECT reference, type, product_code, amount_kobo, status, created_at
+        FROM transactions WHERE user_id = ${userId}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit} OFFSET ${offset}`,
+    ]);
+    return {
+      total: Number(count[0]?.total ?? 0),
+      items: rows.map((r) => ({
+        reference: r.reference,
+        type: r.type,
+        productCode: r.product_code,
+        amountKobo: Number(r.amount_kobo),
+        status: r.status,
+        createdAt: r.created_at,
+      })),
+    };
   }
 
   async walletBalance(userId: number): Promise<number> {

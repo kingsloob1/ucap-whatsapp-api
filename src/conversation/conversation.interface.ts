@@ -50,7 +50,13 @@ export type PendingAction =
   | { type: "fund"; amountKobo: number }
   | { type: "withdraw"; amountKobo: number }
   | { type: "buy"; productCode: string; amountKobo: number }
-  | { type: "balance" };
+  | { type: "balance" }
+  // A paginated view: one member each, so a check on `type` narrows it.
+  | { type: "products" }
+  | { type: "history" };
+
+/** The paginated views of the menu: what the user holds, and their transaction history. */
+export type BrowseView = "products" | "history";
 
 /** Everything onboarding collects, held while the user reviews it before the account is created. */
 export interface OnboardingDraft {
@@ -108,6 +114,8 @@ export type Session =
   | { step: "withdraw_amount" }
   | { step: "buy_product" }
   | { step: "buy_amount"; productCode: string }
+  // A page of a paginated view, after the PIN: Next / Previous move between pages.
+  | { step: "browse"; view: BrowseView; page: number }
   // Fund, withdraw or buy in a WhatsApp Flow: the amount (and product) screen
   // sets `action`, the PIN screen `approved`.
   | {

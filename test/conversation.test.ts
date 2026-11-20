@@ -364,6 +364,132 @@ describe("menu actions", () => {
   });
 });
 
+describe("my products and transaction history", () => {
+  const waId = "2348000000010";
+  const PIN = "4826";
+
+  /** The page message's buttons, as their ids. */
+  const nav = (r: Awaited<ReturnType<typeof say>>) => {
+    const m = r.replies[0]!;
+    return m.kind === "buttons" ? m.buttons.map((b) => b.id) : [];
+  };
+  const footer = (r: Awaited<ReturnType<typeof say>>) => {
+    const m = r.replies[0]!;
+    return m.kind === "buttons" ? m.footer : undefined;
+  };
+
+  beforeAll(async () => {
+    await onboard(waId, "22255566611"); // Money Market Fund and Stocks
+    await say(waId, "fund");
+    await say(waId, "60000");
+    await say(waId, PIN);
+    // A purchase in each of the six products: 7 transactions, 6 holdings.
+    for (const n of ["1", "2", "3", "4", "5", "6"]) {
+      await say(waId, "buy");
+      await say(waId, n);
+      await say(waId, `${n}000`);
+      await say(waId, PIN);
+    }
+  });
+
+  test("the menu lists both, after Buy products", async () => {
+    const r = await say(waId, "menu");
+    const menu = r.replies[0]!;
+    expect(menu.kind).toBe("list");
+    const rows =
+      menu.kind === "list" ? menu.sections.flatMap((s) => s.rows) : [];
+    expect(rows.map((row) => row.id)).toEqual([
+      "menu:fund",
+      "menu:balance",
+      "menu:withdraw",
+      "menu:buy",
+      "menu:products",
+      "menu:history",
+      "close",
+    ]);
+  });
+
+  test("My products asks for the PIN, then pages through the holdings", async () => {
+    let r = await say(waId, tap("menu:products", "My products"));
+    expect(r.step).toBe("authorize");
+    expect(r.body).toContain("PIN to view your products");
+
+    r = await say(waId, PIN);
+    expect(r.step).toBe("browse");
+    expect(r.body).toContain("📊 *Your products*");
+    expect(r.body).toContain("1. *Money Market Fund*\n₦1,000.00");
+    expect(r.body).toContain("*Total invested: ₦21,000.00*");
+    expect(r.body).not.toContain("6.");
+    expect(footer(r)).toBe("Page 1 of 2");
+    expect(nav(r)).toEqual(["page:next", "menu"]);
+
+    // The next page needs no PIN.
+    r = await say(waId, tap("page:next", "Next ▶"));
+    expect(r.step).toBe("browse");
+    expect(r.body).toContain("6. *");
+    expect(footer(r)).toBe("Page 2 of 2");
+    expect(nav(r)).toEqual(["page:previous", "menu"]);
+  });
+
+  test("Transaction history pages newest first, and stays in range", async () => {
+    await say(waId, "history");
+    let r = await say(waId, PIN);
+    expect(r.step).toBe("browse");
+    expect(r.body).toContain("🧾 *Transaction history*");
+    expect(r.body).toContain("1. *Bought Trustees* · ₦6,000.00");
+    expect(r.body).toMatch(/\d{1,2} \w{3} \d{4}, \d{2}:\d{2} · Ref BUY-/);
+    expect(r.body).not.toContain("Wallet funded");
+    expect(footer(r)).toBe("Page 1 of 2");
+
+    r = await say(waId, "next");
+    expect(r.body).toContain("6. *Bought Money Market Fund* · ₦1,000.00");
+    expect(r.body).toContain("7. *Wallet funded* · +₦60,000.00");
+    expect(footer(r)).toBe("Page 2 of 2");
+
+    // A Next tapped on an old message, past the end: the last page again.
+    r = await say(waId, tap("page:next", "Next ▶"));
+    expect(footer(r)).toBe("Page 2 of 2");
+
+    r = await say(waId, "Previous");
+    expect(footer(r)).toBe("Page 1 of 2");
+    expect((await say(waId, tap("menu", "Menu"))).step).toBe("menu");
+  });
+
+  test("from a page, a menu choice or CANCEL goes on as from the menu", async () => {
+    await say(waId, "history");
+    await say(waId, PIN);
+    expect((await say(waId, "2")).step).toBe("authorize"); // Check balance
+    await say(waId, "cancel");
+
+    await say(waId, "history");
+    await say(waId, PIN);
+    const r = await say(waId, "cancel");
+    expect(r.step).toBe("menu");
+    expect(r.replies).toHaveLength(1);
+    expect(r.body).not.toContain("nothing to cancel");
+  });
+
+  test("cancelling at the PIN says what was dropped, without money words", async () => {
+    await say(waId, "history");
+    const r = await say(waId, "cancel");
+    expect(r.replies[0]!.body).toBe(
+      "❌ Viewing your transaction history was cancelled.",
+    );
+  });
+
+  test("a user with no transactions is told so, with the menu", async () => {
+    const other = "2348000000011";
+    await onboard(other, "22255566622");
+    await say(other, "history");
+    const r = await say(other, PIN);
+    expect(r.step).toBe("menu");
+    expect(r.replies[0]!.body).toContain(
+      "You haven't made any transactions yet",
+    );
+    expect(r.replies[1]).toMatchObject({ kind: "list" });
+  });
+});
+
 describe("cancelling", () => {
   const waId = "2348000000007";
 
